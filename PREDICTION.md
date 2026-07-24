@@ -1,0 +1,4 @@
+- Huge security breach: admin access with hardcoded and easily guessable credentials.
+- Binaries are committed to the repository - weird.
+- Data are stored in txt files - not a database. User passwords are stored in plaintext(!) - another security issue.
+- As an admin, I can edit amount of money in any account - seems to be another security issue.
