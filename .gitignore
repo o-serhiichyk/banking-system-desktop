@@ -1,0 +1,10 @@
+# Build intermediates (regenerated on every build — noise, not source)
+obj/
+
+# IDE / editor folders
+.idea/
+.vs/
+
+# NOTE: bin/ is intentionally NOT ignored.
+# The prebuilt bin/Debug/BMS WinForm.exe and the bin/Debug/*.txt sample data
+# are committed on purpose so the app runs with zero build.
