@@ -319,3 +319,148 @@ Priority spot-checks, strongest evidence first:
 
 *(Phase 1·rev next: hand this log + the code to Fable as a different-model
 auditor to flag any unsupported, miscited, or fabricated claim before Phase 2.)*
+
+---
+
+## Session 1-rev · Phase 1·rev — Adversarial audit of the Phase-1 analysis
+
+- **Date:** 2026-07-24
+- **Model:** Fable 5 (different-model auditor), fresh session.
+- **Method:** re-read every cited source file in full (`Program.cs`, all three BL,
+  all three DL, `Form1.cs`, `DepositMoneyCus.cs`, `WithDrawMoneyCus.cs`,
+  `TransactMoneyCus.cs`, `AddUser.cs`, `CusForm.cs`, `EditCustomer.cs`,
+  `ViewCustomer.cs`, plus `practice.cs` and — beyond Phase-1 scope —
+  `BalanceDetailsCus.cs` and grep of the history/feedback forms) and checked
+  every `file:line` citation and behavioral claim in §§1–6 against the code and
+  the shipped `bin/Debug/*.txt` data.
+
+### Verdict
+
+**No fabricated claims. No miscitations.** Every `file:line` reference in
+§§1–6 resolves to the code it describes (~60 distinct citations checked,
+including all 16 risk items, all five flow traces, both writer line numbers in
+the 10-vs-9-field claim, and the sample `customers.txt` row, which matches the
+shipped file byte-for-byte). The two headline bugs are confirmed as cited: the
+withdraw sign bug (`WithDrawMoneyCus.cs:29` adds; `DL/CustomerDL.cs:217`
+subtracts) and the admin backdoor (`DL/MUserDL.cs:28`).
+
+### Overstatements / wording corrections (minor)
+
+1. **Risk 10 slightly overstated.** `read_data` guards *empty* numeric fields
+   with `"0"` defaults (`DL/AdminDL.cs:68-71,75-78,81-84`), so blank fields and
+   trailing empty lines do **not** throw; only non-numeric garbage does. The
+   crash-on-startup claim stands, but is narrower than written.
+2. **Risk 2 wording:** "a self-registered user named `admin`" — there is no
+   self-registration; only an operator can create accounts (`AddUser` is an
+   admin-side control). The escalation is real (`AddUser.cs:51-57` checks
+   uniqueness only against the *customer* list, so an operator can create a
+   customer named `admin`, who then gets `AdminWindow` via `DL/MUserDL.cs:44`),
+   but the actor is an operator, not an end user.
+3. **§4 history schemas are 4/6-field in practice, not 3/5.** The date strings
+   written include a comma (`"Thursday, 2 June 2022"` — see shipped
+   `depositHistory.txt`), and the readers compensate by concatenating the extra
+   field back onto the date (`DL/CustomerDL.cs:78,99,122,145`). So the code
+   already contains a hand-rolled workaround for exactly one comma-in-data —
+   strengthening risk 8, but the schema table as written undercounts the
+   columns on disk.
+
+### Missed findings (material — add to the record)
+
+1. **The Balance Details screen actively corrupts the balance** — this
+   *answers §6's first open question*. `BalanceDetailsCus_Load` re-reads all
+   four history files **without clearing the lists** (`BalanceDetailsCus.cs:40-43`;
+   contrast `DepositHistory.cs:33-34`, which clears first), so entries
+   duplicate on every visit; it then calls `btnRefresh_Click`
+   (`BalanceDetailsCus.cs:50,73-86`), which runs all four side-effecting
+   `calculate*Money` methods — mutating `AdminDL.Current.TotalMoney` — on
+   every load *and every Refresh click*. Risk 12's "calling them more than
+   once" is not hypothetical: the UI does it, and Log Out then flushes the
+   corrupted value to `customers.txt`. **[exec — promote to top of the Phase-2
+   queue: open Balance Details, click Refresh twice, Log Out, diff.]**
+2. **A third balance model.** The displayed "Available" balance is
+   `deposit + received − transact − withdraw` (`CustomerDL.totalMoney`
+   `DL/CustomerDL.cs:253-259`, called at `BalanceDetailsCus.cs:84`) — it
+   ignores both `TotalMoney` and the initial deposit. So the app has three
+   disagreeing balance definitions: the incremental in-memory one, the
+   `calculate*` side-effect one, and the displayed one.
+3. **`EditCustomer` has no uniqueness validation** — unlike `AddUser`, an edit
+   can assign an already-taken username, phone, or account number
+   (`EditCustomer.cs:44-64` validates only the account-number range).
+4. **Referential integrity is already broken in the shipped data:**
+   `withDrawHistory.txt` contains users `Ali`/`Karim` that match no username
+   in `customers.txt` — orphan rows the readers silently skip.
+5. **Test-plan correction (affects Phase 4, contradicts PLAN §1):** the BL/DL
+   types are **not** "all public". Only `Admin` is `public` (`BL/Admin.cs:9`);
+   `Customer`, `MUser`, and all three DL classes are default-`internal`
+   (`BL/Customer.cs:9`, `BL/MUser.cs:9`, `DL/AdminDL.cs:11`,
+   `DL/CustomerDL.cs:11`, `DL/MUserDL.cs:12`). The NUnit project will need
+   `InternalsVisibleTo` (or the types made public) — decide before Phase 4.
+6. Minor corroboration: five history `.txt` files also sit at the **repo
+   root**, evidencing the relative-path/working-directory fragility claimed in
+   §4; and `bin/Debug/transactHistory.txt` + `sendMoneyPath.txt` are empty
+   while the root copies are not.
+
+### Effect on the Phase-2 queue
+
+Keep items 1–6 as listed; **insert the Balance-Details double-count probe as
+new priority 1** (it is the strongest executable demonstration that in-memory
+balance ≠ stored balance ≠ displayed balance), and note for item 3 that a
+freshly appended 10-field row is silently *repaired* to 9 fields by the first
+full rewrite (Log Out / edit / delete), so the probe must inspect
+`customers.txt` **before** any of those.
+
+---
+
+## Session 1-rev · Phase 1·rev — Builder's cross-check of the Fable audit (Opus)
+
+- **Date:** 2026-07-24
+- **Model:** Opus 4.8 — author of the Phase-1 analysis, re-verifying the Fable
+  audit against source + shipped data *before* its findings feed Phase 2
+  (closing the cross-model loop: Fable audited Opus; Opus now verifies Fable).
+- **Verdict:** **the Fable audit holds.** I spot-checked its highest-consequence
+  claims against the code and the `bin/Debug`/root `.txt` files; all resolve, and
+  I found **no error in the auditor itself**. Adopting its corrections and
+  additions into the Phase-2 queue.
+
+**Independently confirmed by direct read:**
+- **Balance-Details corruption** (audit finding 1): `BalanceDetailsCus_Load`
+  re-reads all four histories with **no `.Clear()`** (`BalanceDetailsCus.cs:40-43`;
+  contrast `DepositHistory.cs:33`, which clears first), then `:50` calls
+  `btnRefresh_Click`, which runs the four side-effecting `calculate*Money()` and
+  the third-model `totalMoney()` (`BalanceDetailsCus.cs:73-86`, total at `:84`) on
+  **every load and every Refresh click**. Confirmed → **Phase-2 priority 1**.
+- **Three balance models** (finding 2): the displayed "Available" uses
+  `CustomerDL.totalMoney` (`DL/CustomerDL.cs:253-259`, called `BalanceDetailsCus.cs:84`),
+  distinct from the incremental in-memory model and the `calculate*` side-effect
+  model. Confirmed.
+- **Types are NOT all public** (finding 5): only `Admin` is `public`
+  (`BL/Admin.cs:9`); `Customer`, `MUser`, `AdminDL`, `CustomerDL`, `MUserDL` are
+  default-`internal`. **Phase-4 action item:** the NUnit project needs
+  `InternalsVisibleTo("<TestAssembly>")` (or promote the types) — this **corrects
+  PLAN §1's "all public" note.** Confirmed.
+- **Comma-in-date schema** (correction 3): confirmed on disk — e.g.
+  `T,1221,Thursday, 2 June 2022` in `depositHistory.txt`; readers rebuild the date
+  by concatenating fields 3+4 / 5+6 (`DL/CustomerDL.cs:78,99,122,145`). History
+  rows are **4/6 fields on disk, not 3/5** as §4 stated. Strengthens risk 8.
+- **Orphan data** (finding 4): `withDrawHistory.txt`/`depositHistory.txt` reference
+  `Ali`, `Karim`, `Ghulam` — none are usernames in `customers.txt` (usernames
+  there are `Haider, T, Saleem, Alian`); readers silently skip them. Confirmed.
+
+**Builder's addition — dual data sets + a run-from-`bin/Debug` gate (sharpens §4):**
+- There are **two divergent copies of the data**: the committed `bin/Debug/*.txt`
+  sample data, and *stale* copies of the five history files at the **project
+  root**. `bin/Debug/transactHistory.txt` and `sendMoneyPath.txt` are **0 bytes**;
+  the root copies are not — and their contents differ (root `depositHistory.txt`
+  has `Karim/Ghulam`; `bin/Debug` has `T`).
+- **`customers.txt` and `Users.txt` exist only in `bin/Debug`** — not at the
+  project root. `LogIn` reads them by relative path (`Form1.cs:22-23`), so
+  launching with **CWD = project root throws `FileNotFoundException` in the ctor →
+  the app crashes at startup.** It is only runnable with **CWD = `bin/Debug`**
+  (where the committed `.exe` sets it). This is the concrete failure behind §4's
+  "working-directory-dependent" claim, and a **Phase-2 gate: launch the committed
+  exe and diff the `bin/Debug` copies** — the pristine `customers.txt` (restored
+  to `…,9000`) is the correct baseline.
+
+**Net:** Phase-1 analysis, the Fable audit, and this cross-check converge. The
+Phase-2 validation queue stands as revised, with the Balance-Details double-count
+as priority 1 and the run-from-`bin/Debug` gate noted up front.
