@@ -28,18 +28,91 @@ code change.
 
 Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**.
 
-| # | Capability | Kind | Complexity | Mitigates |
-|---|---|---|---|---|
-| 1 | Pre-transaction validation guard | [INCOMPLETE] | Medium | S25 |
-| 2 | Account status and non-destructive closure | [NEW] | Complex | A4, S17 |
-| 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 |
-| 4 | Explicit role attribute | [NEW] | Medium | **rank 1** |
-| 5 | Append-only audit trail | [NEW] | Medium | **rank 3** |
-| 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 |
-| 7 | Transaction receipt and account statement | [NEW] | Medium | — |
-| 8 | Product differentiation by account type | [NEW] | Complex | — |
-| 9 | Transaction and balance limits | [NEW] | Medium | — |
-| 10 | Multiple accounts per customer | [NEW] | Complex | — |
+| # | Capability | Kind | Complexity | Addresses | Coverage |
+|---|---|---|---|---|---|
+| 1 | Pre-transaction validation guard | [INCOMPLETE] | Medium | S25 | **Partial** — gated on rank 2 |
+| 2 | Account status and non-destructive closure | [NEW] | Complex | S17, A4 | **Prevents recurrence** |
+| 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 | **Full** (S47 unreachable) |
+| 4 | Explicit role attribute | [NEW] | Medium | **rank 1** | **Partial** — one limb of two |
+| 5 | Append-only audit trail | [NEW] | Medium | **rank 3** | **Partial** — one limb of two |
+| 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 | **Partial** on all three |
+| 7 | Transaction receipt and account statement | [NEW] | Medium | rank 2 | **Detects only** |
+| 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** rank 4 |
+| 9 | Transaction and balance limits | [NEW] | Medium | rank 1, S25 | **Bounds damage** |
+| 10 | Multiple accounts per customer | [NEW] | Complex | — | — |
+
+### Coverage is graded, not binary
+
+An earlier version of this table claimed flat mitigation. That overstated it:
+most of these capabilities reduce or bound a risk without closing it, and a
+claim of "mitigates X" is the first thing a reviewer tests. What each one
+**leaves behind**:
+
+**1 · Validation guard → S25.** The guard is only as good as the balance it
+checks against, and rank 2 means three balances disagree. *Residual: an
+"insufficient funds" check built on a corrupted balance is not a funds check.
+This capability is gated on rank 2 being fixed first.*
+
+**2 · Account closure → S17, A4.** Soft-close plus a no-reissue rule stops new
+orphans and stops a reissued number inheriting a stranger's transfers.
+*Residual: the orphan rows already in the shipped `withDrawHistory.txt` (`Ali`,
+`Karim`, `Ghulam`) are not repaired by it. Prevention, not remediation.*
+
+**3 · Credential protection → S22, S23.** Both limbs of S22 (at rest, on screen)
+and S23 are genuinely closed. *Residual: **S47 is unreachable by any capability**
+— the credentials are already in git history from the original author's first
+commit, and hashing forward cannot remove them. Only a history rewrite would,
+which is unavailable without destroying the fork's attribution.*
+
+**4 · Role attribute → rank 1.** Rank 1 has two limbs in two different methods.
+The role attribute replaces `isAdmin`'s username check (`DL/MUserDL.cs:42-49`) —
+that limb closes. **The hardcoded backdoor is in `checkuser`
+(`DL/MUserDL.cs:26-31`) and is untouched by it.** `checkuser` returns the
+caller's own object (`:30`), which carries no persisted role, so after this
+change the backdoor no longer grants admin — but it still *authenticates*, and
+`Form1.cs:74` then calls `AdminDL.setCurrent`, which fails open (S24) and leaves
+the previous customer bound. *Residual: rank 1 closes only if the
+implementation also deletes the literal at `:28` and makes `setCurrent` fail
+closed. Scoped as "add a role field", it converts a privilege escalation into a
+session-confusion bug.*
+
+**5 · Audit trail → rank 3.** Rank 3 also has two limbs. Unlogged privileged
+edits: closed — that is precisely what the trail records. **Falsifiable
+timestamps: not closed.** The trail carries its own system-generated times, but
+`depositHistory.txt`, `withDrawHistory.txt`, `transactHistory.txt` and
+`sendMoneyPath.txt` still take their dates from `DateTimePicker.Text`
+(`DepositMoneyCus.cs:59`, `WithDrawMoneyCus.cs:28`, `TransactMoneyCus.cs:58`).
+*Residual: the customer-facing ledger stays backdatable; you gain a trustworthy
+parallel record, not a trustworthy primary one. The limb that closes it is the
+**rejected** candidate "system-generated transaction timestamps", pruned as
+`[FIX]` — see Rejected candidates below.*
+
+**6 · Atomic writes → S12, S28, S48.** Partial on each. *S12: write-temp-replace
+makes each file atomic, but a transfer writes two files — per-file atomicity
+does not make the pair atomic, and an ordering/recovery decision is still
+required. S28: a shared write helper fixes the writers; the finding also covers
+every **reader** (16 sites), which a write helper does not reach. S48: one
+retained generation is a rollback, not disaster recovery — same disk, same
+directory, and the data still lives under `bin/`.*
+
+**7 · Receipt and statement → rank 2.** Does not fix any balance. *It makes the
+discrepancy visible to the customer, which is detection, not mitigation — worth
+stating as such rather than claiming credit for the fix.*
+
+**8 · Product differentiation → ⚠ worsens rank 4.** Interest accrual produces
+fractional amounts by construction, which turns the `double` exactness problem
+from latent-in-the-demo-data into live. *This capability must not ship before
+rank 4 is fixed. It is the clearest case in the slate of a feature whose
+prerequisite is a defect repair.*
+
+**9 · Limits → rank 1, S25.** Mitigates nothing outright, but caps the blast
+radius of both: an escalated operator and an unvalidated withdrawal are both
+survivable when a per-transaction ceiling exists. *Recorded as bounding rather
+than mitigating; a daily cap additionally needs trustworthy dates, so that limb
+is gated on rank 3.*
+
+**10 · Multiple accounts.** No ranked risk. Relieves capability 2's problem that
+closing an account currently deletes the person.
 
 ---
 
@@ -302,12 +375,27 @@ Criterion (iv) narrows the slate to **capability 4** (role attribute → rank 1)
 and **capability 5** (audit trail → rank 3). Criteria (i)–(iii) decide between
 them.
 
+**Both are partial, and the scoping decision is part of the choice** — see
+Coverage above. Neither closes its ranked risk as stated; each closes one limb
+of two.
+
 | | Capability 4 · role attribute | Capability 5 · audit trail |
 |---|---|---|
-| Mitigates | rank 1 (highest) | rank 3 |
+| Addresses | rank 1 (highest) | rank 3 |
+| Limb closed | authorization by username (`isAdmin`) | unlogged privileged edits |
+| Limb left open | the backdoor in `checkuser:28`, plus `setCurrent` failing open | falsifiable timestamps on the four history files |
+| Closing the residual | delete one literal + make `setCurrent` return `bool` — both small, both in scope if chosen deliberately | requires changing the history file formats and their readers — **not** small |
 | Record format | **changes** — needs data migration | additive — new file only |
 | Existing paths touched | login, add-user, both DL classes | three money handlers, four admin paths |
 | Testable without UI | role resolution is a pure function | writer is pure; capture is not |
+| Risk if scoped naively | escalation becomes session confusion — arguably worse | a trustworthy parallel record beside an untrustworthy ledger |
+
+The asymmetry that matters: **capability 4's residual is cheap to close and
+capability 5's is not.** A role attribute *plus* deleting the literal *plus* a
+fail-closed `setCurrent` is still a Medium-sized change and would genuinely shut
+rank 1. Making the primary ledger's timestamps trustworthy means touching four
+file formats and every reader that parses them — which is why the standalone
+"system-generated timestamps" candidate was pruned in the first place.
 
 **Not yet decided.**
 
