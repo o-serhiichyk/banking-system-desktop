@@ -34,7 +34,7 @@ Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**
 | 2 | Account status and non-destructive closure | [NEW] | Complex | S17, A4 | **Prevents recurrence** |
 | 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 | **Full** (S47 unreachable) |
 | 4 | Explicit role attribute | [NEW] | Medium | **rank 1** | **Partial** — one limb of two |
-| 5 | **Append-only audit trail** ✅ *chosen for Task 4* | [NEW] | Medium | **rank 3** | **Partial** — one limb of two |
+| 5 | **Append-only audit trail** ✅ *chosen for Task 4* | [NEW] | Medium | **rank 3** · +10 findings | **Partial** mitigation (1 limb of 2) · **broad detection** |
 | 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 | **Partial** on all three |
 | 7 | Transaction receipt and account statement | [NEW] | Medium | rank 2 | **Detects only** |
 | 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** rank 4 |
@@ -45,8 +45,17 @@ Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**
 
 An earlier version of this table claimed flat mitigation. That overstated it:
 most of these capabilities reduce or bound a risk without closing it, and a
-claim of "mitigates X" is the first thing a reviewer tests. What each one
-**leaves behind**:
+claim of "mitigates X" is the first thing a reviewer tests.
+
+**Mitigation and detection are different axes**, and the column above tracks
+both because they diverge sharply for one entry. A capability can close a defect
+(mitigation) or make it *visible* without closing it (detection) — capability 7
+is detection-only for rank 2, and **capability 5 is the extreme case: partial on
+the one risk it mitigates, and the widest-reaching item on the slate by
+detection.** Reading the mitigation figure alone would rank it last; that is
+precisely the error corrected in the decision section below.
+
+What each one **leaves behind**:
 
 **1 · Validation guard → S25.** The guard is only as good as the balance it
 checks against, and rank 2 means three balances disagree. *Residual: an
@@ -86,6 +95,12 @@ timestamps: not closed.** The trail carries its own system-generated times, but
 parallel record, not a trustworthy primary one. The limb that closes it is the
 **rejected** candidate "system-generated transaction timestamps", pruned as
 `[FIX]` — see Rejected candidates below.*
+
+**This is the entry where the mitigation figure misleads.** Partial on rank 3 is
+the whole of its *mitigation* story and none of its value: with before/after
+values recorded, it is the detection layer for roughly ten findings across five
+failure modes — several times the reach of anything else on the slate. Full
+table in the decision section below.
 
 **6 · Atomic writes → S12, S28, S48.** Partial on each. *S12: write-temp-replace
 makes each file atomic, but a transfer writes two files — per-file atomicity
