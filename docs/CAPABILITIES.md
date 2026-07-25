@@ -1,0 +1,351 @@
+# CAPABILITIES — missing and incomplete functionality
+
+**Status: current.** This file is the authoritative statement of *what is true
+now*. [`ANALYSIS_LOG.md`](ANALYSIS_LOG.md) is the append-only audit trail —
+authoritative for *what happened when*. Where the two differ in content, this
+file wins; where they differ on chronology, the log wins.
+
+Every claim carries a `file:line`. Paths are relative to `BMS WinForm/`.
+Cross-references to defects (`S…`) point at [`FINDINGS.md`](FINDINGS.md).
+
+## Kind flag
+
+The assignment asks for capabilities *"missing **or incomplete**"*, so all three
+kinds below are admissible. The flag is recorded because the **mix** matters: a
+slate made mostly of `[FIX]` items restates the defect catalogue instead of
+answering the question. Classified by the **capability**, not the size of the
+code change.
+
+| Flag | Test |
+|---|---|
+| **[NEW]** | The capability does not exist in any form |
+| **[INCOMPLETE]** | Exists, but only on some paths or in rudimentary form |
+| **[FIX]** | Exists everywhere it should, but produces wrong results |
+
+---
+
+# The slate — 10 capabilities
+
+Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**.
+
+| # | Capability | Kind | Complexity | Mitigates |
+|---|---|---|---|---|
+| 1 | Pre-transaction validation guard | [INCOMPLETE] | Medium | S25 |
+| 2 | Account status and non-destructive closure | [NEW] | Complex | A4, S17 |
+| 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 |
+| 4 | Explicit role attribute | [NEW] | Medium | **rank 1** |
+| 5 | Append-only audit trail | [NEW] | Medium | **rank 3** |
+| 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 |
+| 7 | Transaction receipt and account statement | [NEW] | Medium | — |
+| 8 | Product differentiation by account type | [NEW] | Complex | — |
+| 9 | Transaction and balance limits | [NEW] | Medium | — |
+| 10 | Multiple accounts per customer | [NEW] | Complex | — |
+
+---
+
+## 1 · Pre-transaction validation guard (funds, amount, self-transfer) — [INCOMPLETE]
+
+**Missing.** No operation validates anything about the money. Withdraw parses an
+amount and applies it with no balance reference anywhere in the handler
+(`WithDrawMoneyCus.cs:22-40`). Transfer validates only that the destination
+account exists (`TransactMoneyCus.cs:41-53`) — no funds check, no amount > 0, no
+sender ≠ recipient. Deposit accepts any parseable double
+(`DepositMoneyCus.cs:57`). Rudimentary validation *does* exist elsewhere (an
+opening-deposit minimum at `AddUser.cs:83`), which is why this is `[INCOMPLETE]`
+rather than `[NEW]`.
+
+**Business value.** The difference between a ledger and a text file. Probe 3
+accepted a 999,999 withdrawal against a 9,000 account; probe 4 accepted a
+transfer to the sender's own account. Both were recorded as completed
+transactions the bank has no basis to reverse.
+
+**Complexity — Medium.** The guards are a few lines in three handlers, but
+"insufficient funds" has no unambiguous answer today: three disagreeing balances
+exist (findings rank 2), so this forces a decision on which is authoritative.
+
+**Blast radius.** `WithDrawMoneyCus.cs`, `TransactMoneyCus.cs`,
+`DepositMoneyCus.cs`, a new validator in `BL/`; the threshold at `AddUser.cs:83`
+belongs in the same helper.
+
+*Overlap disclosed:* this is the capability form of defect **S25**. Kept despite
+the overlap because a banking system with no funds check is the first capability
+a reviewer looks for.
+
+## 2 · Account status and non-destructive closure — [NEW]
+
+**Missing.** `Admin` has nine fields and none is a status (`BL/Admin.cs:11-19`).
+The only way to end a relationship is a hard delete — removed from both
+in-memory lists (`DL/AdminDL.cs:110-119`, `DL/MUserDL.cs:98-108`) with both
+files rewritten (`ViewCustomer.cs:105-108`). Nothing removes or annotates the
+customer's history rows, and nothing prevents the account number being reissued
+(`AddUser.cs:75-81` checks live customers only).
+
+**Business value.** A closed account's history is exactly what a bank must
+retain and exactly what this deletes the anchor for; the orphan rows already in
+`withDrawHistory.txt` are what that looks like afterwards. A frozen or dormant
+state is also the normal response to suspected fraud, which the app cannot
+express at all.
+
+**Complexity — Complex.** `customers.txt` is positional and read by field index,
+so a new field changes the format for every reader and writer, and every list
+consumer (login, search, grid, bank total `DL/AdminDL.cs:138-147`) must learn to
+exclude closed accounts.
+
+**Blast radius.** `BL/Admin.cs`, `DL/AdminDL.cs`, `ViewCustomer.cs`,
+`AddUser.cs`, `Form1.cs`, the five `*Search.cs` controls, existing data files.
+
+## 3 · Credential protection at rest and on screen — [NEW]
+
+**Missing.** One capability, two exposure surfaces — merged deliberately, since
+treating them separately would ship a slate where hashing "fixes" a secret that
+remains fully legible on the operator's screen.
+
+*At rest:* passwords written verbatim to `Users.txt` and `customers.txt`
+(`DL/MUserDL.cs:84`, `DL/AdminDL.cs:96,105`) and compared by string equality
+(`DL/MUserDL.cs:34`, `DL/AdminDL.cs:31`). *On screen:* the admin grid
+auto-generates a `Password` column from the bound `Admin` object
+(`ViewCustomer.cs:34`, `BL/Admin.cs:23`); the value is rendered into plain labels
+on the customer's own profile (`CustomerHome.cs:29`) and in search results
+(`SearchResult.cs:28`); and the Add/Edit password boxes have no
+`UseSystemPasswordChar` (`AddUser.Designer.cs:146-152`,
+`EditCustomer.Designer.cs:107-112`) — only the login box does
+(`Form1.Designer.cs:320`).
+
+**Business value.** Anyone with read access to `bin/Debug/` — including anyone
+who clones the repository — has every customer's live password, and every
+password is legible on the operator's screen at once (observed in probe 6: `15`,
+`1`, `123`, `12`, `a`, `zzz`). See also **S47**: the credentials are already in
+git history, so hashing forward does not remove them.
+
+**Complexity — Medium.** Hashing is small, but the password is also a *match
+key*: `setCurrent` (`DL/AdminDL.cs:27-36`) and `MUserDL.editCustomerData`
+(`DL/MUserDL.cs:109-120`) identify records by username+password, so those
+lookups change too, plus a one-time file migration.
+
+**Blast radius.** `DL/MUserDL.cs`, `DL/AdminDL.cs`, `Form1.cs:60-87`,
+`AddUser.cs`, `EditCustomer.cs`, `ViewCustomer.cs` + designer,
+`CustomerHome.cs`, `SearchResult.cs`, existing data files.
+
+## 4 · Explicit role attribute, replacing username-string authorisation — [NEW]
+
+**Missing.** Authorisation is one string comparison on the username, consulting
+neither password nor role: `isAdmin` returns true for any user called `Admin` or
+`admin` (`DL/MUserDL.cs:42-49`), and a hardcoded credential pair is accepted
+before the user store is consulted (`DL/MUserDL.cs:28`). Neither `MUser`
+(`BL/MUser.cs:11-13`) nor `Admin` (`BL/Admin.cs:11-19`) carries a role.
+
+**Business value.** Probe 6 created an ordinary customer named `admin` and landed
+in the admin console with full operator rights — all PII, all plaintext
+passwords, arbitrary balance edits, deletion. Escalation requires no secret, and
+the built-in pair cannot be rotated without a code change while the prebuilt
+`.exe` ships in the repository.
+
+**Complexity — Medium.** The routing decision lives in one place
+(`Form1.cs:68`); the work is a persisted role plus file migration, plus deciding
+what the first operator account is once the hardcoded pair is gone.
+
+**Blast radius.** `BL/MUser.cs`, `BL/Admin.cs`, `DL/MUserDL.cs`,
+`DL/AdminDL.cs`, `Form1.cs`, `AddUser.cs`, existing data files.
+
+**→ Mitigates the top-ranked risk.** One of two candidates satisfying selection
+criterion (iv).
+
+## 5 · Append-only audit trail for money and privileged operations — [NEW]
+
+**Missing.** No logging of any kind exists. Money operations report outcomes only
+through a modal (`DepositMoneyCus.cs:64,69`, `WithDrawMoneyCus.cs:33,38`,
+`TransactMoneyCus.cs:64,71`). Privileged actions leave nothing behind: a balance
+edit mutates the record and rewrites the file (`EditCustomer.cs:55-57`,
+`ViewCustomer.cs:115`) and a delete rewrites both files
+(`ViewCustomer.cs:105-108`) — recording no operator, no previous value, no time.
+`AdminWindow` never receives the identity of the operator who opened it
+(`AdminWindow.cs:21-26`).
+
+**Business value.** The system cannot answer "who changed this balance, when,
+and from what" — the first question after a discrepancy. An escalated operator
+is indistinguishable from a legitimate one precisely because nothing is
+recorded.
+
+**Complexity — Medium.** An append-only writer mirrors the existing `store*`
+methods, but there is no operator identity to log on the admin side, so it has
+to be threaded from login into `AdminWindow` and its child controls.
+
+**Blast radius.** New writer in `DL/`, `Form1.cs`, `AdminWindow.cs`,
+`ViewCustomer.cs`, `EditCustomer.cs`, `AddUser.cs`, the three money handlers.
+
+**→ Mitigates ranked risk 3**, and specifically its *falsifiable* limb: a
+server-generated, append-only trail addresses user-supplied timestamps, not just
+the missing record. The second of two candidates satisfying criterion (iv).
+
+## 6 · Atomic, recoverable file writes with backup — [NEW]
+
+**Missing.** Full rewrites open the target in truncate mode and write from memory
+(`DL/AdminDL.cs:100-109`, `DL/MUserDL.cs:88-97`), so a mid-write failure leaves a
+truncated file and no copy of what was there. Multi-file operations are
+sequences of independent writes with no coordination: create (`AddUser.cs:91,93`),
+transfer (`TransactMoneyCus.cs:62-63`), delete (`ViewCustomer.cs:107-108`). No
+file is opened with a share mode or lock, and no backup is taken anywhere.
+
+**Business value.** `customers.txt` is the only record that a customer exists,
+and the path that rewrites it in place runs on every logout. A
+write-temp-then-replace helper plus one retained generation turns a crash from
+data loss into a recoverable event. See also **S48** — there is no recovery for
+the datastore being lost outright, and it currently lives in a build-output
+directory.
+
+**Complexity — Medium.** One shared helper covers it, but every writer in all
+three DL classes must adopt it, and cross-file operations still need an ordering
+decision.
+
+**Blast radius.** All three DL classes; callers only if the signature differs.
+
+## 7 · Transaction receipt and account statement — [NEW]
+
+**Missing.** A completed transaction produces only a modal
+(`DepositMoneyCus.cs:64`, `WithDrawMoneyCus.cs:33`, `TransactMoneyCus.cs:64`) —
+no reference number, no resulting balance, nothing the customer keeps.
+`Customer` has no identifier field (`BL/Customer.cs:11-20`), so a transaction
+cannot be referred to at all. History screens bind raw lists with no totals, no
+date range and no running balance (`DepositHistory.cs:36` +3), and deposits,
+withdrawals, transfers and receipts are four separate screens never combined
+chronologically. Nothing exports or prints.
+
+**Business value.** A customer disputing a transaction has no reference to quote
+and no combined statement to point at; an operator has no way to produce one.
+Also the cheapest way to make the balance discrepancies visible to the people
+affected by them.
+
+**Complexity — Medium.** A combined chronological query is straightforward and
+CSV export needs no new dependency; a per-transaction reference number means
+adding a field to the history formats, touching their readers and writers.
+
+**Blast radius.** The three money handlers, the four history screens,
+`BL/Customer.cs`, `DL/CustomerDL.cs`, one new export writer.
+
+## 8 · Product differentiation by account type (interest accrual) — [NEW]
+
+**Missing.** `AccountType` is captured (`AddUser.cs:59`), persisted
+(`DL/AdminDL.cs:96,105`), read back (`:64`), displayed (`CustomerHome.cs:32`,
+`SearchResult.cs:31`) and editable (`DL/AdminDL.cs:130`) — and **branches no
+behaviour anywhere in the solution.** The offered values are `"Saving "` and
+`"Current"` (`AddUser.Designer.cs:172-173`; note the trailing space), and
+`interest` appears nowhere in the source. A savings account and a current
+account are the same product with a different label.
+
+**Business value.** Account type is the primary axis a retail bank prices on —
+interest, overdraft, fees, minimum balance. The data model already anticipates
+the distinction; none of it was built, so the field is decorative and the bank
+cannot offer two products.
+
+**Complexity — Complex.** Accrual needs a posting mechanism, a rate
+configuration and reliable dates — and dates are currently user-supplied display
+strings (S16). There is also no scheduler or batch entry point in an application
+that only runs when someone opens it.
+
+**Blast radius.** `BL/Admin.cs`, a new rate/product type, `DL/CustomerDL.cs`,
+`BalanceDetailsCus.cs`, `CustomerHome.cs`; the trailing space in `"Saving "`
+must be handled or cleaned in existing data.
+
+*Dependency:* makes finding **S19a** live rather than theoretical — interest
+produces fractional amounts by construction.
+
+## 9 · Transaction and balance limits — [NEW]
+
+**Missing.** No limit of any kind — `limit` appears nowhere in the source. No
+per-transaction ceiling, no daily aggregate cap, no minimum balance, no velocity
+check. The only threshold in the codebase is the account-opening deposit
+minimum (`AddUser.cs:83`, itself off by one — S8).
+
+**Business value.** Limits are the standard containment for both error and
+fraud, and they are what makes an escalated account survivable rather than
+unbounded. They bound the damage from the missing funds check even before a
+correct balance exists.
+
+**Complexity — Medium.** The check is small, but a *daily* cap requires
+aggregating today's transactions — which needs trustworthy dates and currently
+cannot be computed, since dates are user-chosen strings with no time component.
+Per-account limits also need a new persisted field.
+
+**Blast radius.** `BL/Admin.cs`, `DL/AdminDL.cs` record format, the three money
+handlers, a validator shared with capability 1.
+
+## 10 · Multiple accounts per customer — [NEW]
+
+**Missing.** Identity and account are one record. `Admin` carries a single
+`accountNumber` alongside the person's name, city and phone
+(`BL/Admin.cs:11-19`); login binds one such record to the session
+(`DL/AdminDL.cs:27-36`); and every lookup keys on that single number
+(`TransactMoneyCus.cs:42-49`, `DL/CustomerDL.cs:139`,
+`AccountNumberSearch.cs:24-33`). A customer wanting a second account must be
+registered as a second person.
+
+**Business value.** Holding a current and a savings account is the ordinary
+retail case — and the case capability 8 implies the app intended to serve.
+Conflating customer with account also means closing an account deletes the
+person (capability 2).
+
+**Complexity — Complex.** A domain-model split: customer and account become
+separate records with a relationship, and every screen, search, reader and
+writer currently assumes the 1:1 shape.
+
+**Blast radius.** `BL/Admin.cs`, all three DL classes, `Form1.cs`, `CusForm.cs`,
+`AdminWindow.cs`, all five `*Search.cs`, every data file.
+
+---
+
+# Selection criteria for the Task-4 implementation
+
+(i) genuinely Medium · (ii) small blast radius · (iii) unit-testable ·
+(iv) mitigates a risk in the ranked five.
+
+Criterion (iv) narrows the slate to **capability 4** (role attribute → rank 1)
+and **capability 5** (audit trail → rank 3). Criteria (i)–(iii) decide between
+them.
+
+| | Capability 4 · role attribute | Capability 5 · audit trail |
+|---|---|---|
+| Mitigates | rank 1 (highest) | rank 3 |
+| Record format | **changes** — needs data migration | additive — new file only |
+| Existing paths touched | login, add-user, both DL classes | three money handlers, four admin paths |
+| Testable without UI | role resolution is a pure function | writer is pure; capture is not |
+
+**Not yet decided.**
+
+---
+
+# Rejected candidates
+
+25 were generated; 10 were kept. The full text of all 25 with evidence is in
+[`ANALYSIS_LOG.md`](ANALYSIS_LOG.md); summarised here so the prune is auditable.
+
+**Rejected as `[FIX]` — already covered in [`FINDINGS.md`](FINDINGS.md), and
+including them would have made this list a restatement of the defect
+catalogue:** one authoritative balance calculation (S5, S34) · transfer
+settlement at commit (S6) · delimiter-safe record encoding (S14, S31) ·
+system-generated timestamps (S16).
+
+**Rejected as `[INCOMPLETE]` and lower value:** shared record validation on
+create *and* edit (S18) · session lifecycle established on login and cleared on
+logout (S24).
+
+**Rejected as `[NEW]` but lower priority:** load-time schema validation and
+quarantine of bad rows · customer self-service credential change · transaction
+reversal and correcting entries · saved beneficiaries · idle timeout and
+failed-login lockout (retained as defect **S49**, which records it as a present
+risk rather than a gap) · fees and charges · explicit currency · customer
+notification of account activity.
+
+*Note on the last:* notification is the one candidate that genuinely reaches
+outside the application — email or SMS means an external dependency, stored
+credentials and unretryable failures. Flagged as a real production gap but
+poorly matched to this architecture.
+
+## Provenance
+
+The 15 F-series candidates were generated by a session that read
+`ANALYSIS_LOG.md` in full — and that log is a risk register, so the session
+produced mitigations for known bugs, which is why four came back `[FIX]` and
+four `[INCOMPLETE]`. The 10 G-series candidates were written afterwards
+specifically to cover the capability gaps that anchoring suppressed. The
+anchoring, and the fact that it was avoided in the defect pass but not this one,
+is recorded in the log rather than hidden.

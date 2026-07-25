@@ -2633,3 +2633,280 @@ case that these five are ranked wrong."* Keep or revise, and log the reasoning
 either way. Expect the attack on ranks 4 and 5 — that they are not code smells —
 where the answer is the task's own wording, *"code smells **or engineering
 risks**."*
+
+---
+
+## Task 3 — Fable adversarial pass against the ranking · **run, adjudicated**
+
+- **Date:** 2026-07-25
+- **Model:** Fable 5 (different-model adversary), fresh session, given the
+  assignment brief and this log.
+- **Prompt:** the gate above, verbatim — *"argue the strongest case that the
+  chosen five are ranked wrong."*
+- **Method:** the AI attacked on the log's **own** rubric and on the
+  assignment's **own** required fields (`Location in the code` / `Production
+  impact` / *"prioritize from highest to lowest business risk"*), rather than
+  importing an external severity standard. The human defended point by point.
+  Each attack was then scored **withdrawn / survived / answered**. Every new
+  code claim raised during the exchange was verified by grep before being
+  accepted into the record.
+- **Outcome: the ranking is revised.** One entry is promoted, one replaced, one
+  recombined, one kept with a stronger defense than it had.
+
+### The gate's own prediction was correct
+
+`:2633` pre-registered *"expect the attack on ranks 4 and 5 — that they are not
+code smells"* and pre-armed the rebuttal (the task's own wording). The attack
+came on rank 5 exactly as predicted, and the pre-armed answer defeated it.
+Recorded because it is the Phase-2 pre-registration discipline applied to an
+argument instead of an execution: a rebuttal written before the attack is
+evidence in a way one written afterwards is not.
+
+### Scoring the five attacks
+
+| # | Attack | Disposition |
+|---|---|---|
+| **1** | Rank 1's irreversibility is overstated; mode **C** dominates **A** on the rubric | **Survived — adopted.** C promoted to rank 1 |
+| **2** | Ranks 3 and 5 cannot fill the required `Location in the code` field; rank 3 also double-counts F12 on the Task-2 slate | **Partly survived.** Rank 3 replaced by the **S16 limb**, which has citations |
+| **3** | Rank 4 (S19a) is the weakest candidate above *or* below the line | **Withdrawn** — defeated by two human counter-arguments (below) |
+| **4** | Rank 5 (S46) belongs in the Task-4 narrative, not in the five | **Withdrawn** — the category test was never the assignment's |
+| **5** | The order is rhetorical, not rubric-scored; rank 3 is called a *multiplier on all four other entries* yet sits below two of them | **Answered, not withdrawn.** Repair adopted (below) |
+
+### Attribution of the changes
+
+Continuing the convention of `:2471`, because who won which point is part of
+what this exercise reports:
+
+| Point | Owner |
+|---|---|
+| Promoting C over A; replacing mode-G-as-absence with the citable S16 limb | **AI** — attacks 1 and 2, accepted by the human |
+| *"The task says code smells **or engineering risks**, not business risks exclusively"* | **Human** — defeated attack 4 outright |
+| *"We are talking about a BANKING APP, not about the shipped data — real banking data are not integers"* | **Human** — defeated attack 3, and exposed that the AI had repeated the very error the human's `:2342` magnitude correction was made to fix |
+| Recombining S19a+b into one ranked entry | **Human**-proposed, AI-agreed |
+| The revised five and their order | **Human**-proposed, AI-reviewed and adopted unchanged |
+| The multiplier framing that answers attack 5 | **AI**, offered against its own attack |
+
+Both models erred in this exchange and the human adjudicated both times — the
+same shape as the Phase-1·rev / Phase-2 loop, where execution adjudicated
+instead.
+
+### Attack 4 — why it failed, and what it cost the defense anyway
+
+The assignment says *"the five most important code smells **or engineering
+risks**"*, so S46 (no tests, no seam) is squarely eligible; the AI's
+"belongs in Task 4" objection imported a category test the brief does not
+impose. **Eligibility comes from that clause; placement comes from a different
+one** — *"prioritize them from highest to lowest business risk"* — so an item
+admitted as an engineering risk is still *ordered* by business risk, which is
+what putting it fifth already did.
+
+What survives is that **the log's defense of S46 is too apologetic.** *"Not a
+failure of the running system"* (`:2571`) concedes precisely the ground the
+required `Production impact` field asks about, and it does not need to. The
+honest, non-hypothetical fill for that field: **ranks 1 and 4 are both one-line
+arithmetic defects, both live in production today, and both are exactly what a
+single unit test catches.** The production impact of having no tests is not
+future breakage — it is that two of the other four ranked entries exist at all,
+and that every fix to them ships unverified.
+
+### Attack 5 — the repair (adopted)
+
+The objection is real: under a multiplicative rubric, an entry described as *"a
+multiplier on all four other entries"* (`:2542`) cannot obviously sit below two
+of them. The repair is to make explicit what `:2586` currently leaves as
+narrative — **ranks 1–2 are the concrete failures; ranks 3–5 are multipliers on
+them.** A multiplier's own magnitude is conditional on the thing it multiplies
+occurring, so scoring the concrete failures above the conditional ones is
+rubric-consistent rather than merely rhetorical. Stated that way, the sequence
+reading survives *and* the ordering is defensible on the axes.
+
+### Attack 3 — withdrawn, and the S19a write-up superseded
+
+Two human counter-arguments defeated it:
+
+1. **Recombine the limbs.** Same root cause, same fix, and S19b supplies the
+   citable locations and production impact that S19a alone lacked. This is also
+   *more* consistent with the log's own stated method (`:2352` — rank failure
+   *modes*, cite the best-evidenced representative) than the split was. The
+   split stays in the catalogue, where its purpose is citation hygiene; the
+   report carries **one** entry.
+2. **The shipped data is not the domain.** The AI assessed *likelihood* against
+   four hand-typed demo rows containing no cents — the same category error as
+   testing magnitude by money-lost, which `:2342` already corrected. Real
+   banking amounts are fractional by nature. Assessed against the system's
+   purpose rather than its sample data, S19a's likelihood is **certain**, not
+   latent.
+
+**Superseding text for S19a (`:2380-2403`) — recorded here rather than edited in
+place**, per the Probe 3 convention (*"Recorded rather than corrected in
+place"*). Three sentences in the original argue the weak version of the case and
+should not be used in the report:
+
+- *"measured drift in this codebase is currently zero"* — true of the demo data,
+  irrelevant to the risk.
+- *"this is **not** a 'floats lose money' finding, and should not be argued as
+  one"* — in production it is exactly that.
+- The anticipated challenge at `:2400`, *"show one wrong number in the shipped
+  data. There is none."* — this accepts the challenger's framing, inviting a
+  banking ledger to be tested against a dataset with no cents in it. The reply
+  is that the question is scoped to demo data: nothing rejects `0.10` today, and
+  the arithmetic is binary floating point.
+
+**The certainty inverts between the limbs.** The AI had claimed (wrongly, in the
+prior turn) that the certainty lived in S19b. It is the reverse: **cents are
+ordinary banking input, so S19a is certain; account numbers carry no cents even
+in a real bank, so a fractional one is a typo and S19b remains conditional.**
+Lead the combined entry with S19a.
+
+**New argument, not previously in the log:** inexact arithmetic means that even
+*after* rank 1 is repaired, the three balance models can never be **proven** to
+agree — only observed to be close. That makes S19 a **precondition for closing
+rank 1**, which is a stronger placement argument than the existing "multiplies
+rank 3" one.
+
+### Code facts verified during this pass (new to the record)
+
+| Claim | Verified | Cite |
+|---|---|---|
+| There is **no `==` on a money value** anywhere; the three float-equality decisions are all *identity* decisions | grep | `AddUser.cs:77`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139` |
+| Summation of the shipped amounts is **exact** — integral doubles are exact to 2^53, so the drift case cannot rest on summing the demo data | reasoning + grep of the accumulators | `DL/CustomerDL.cs:198,217,234,248` |
+| **Nothing constrains amounts to integers or rounds them**: no `decimal`, no `Math.Round`/`Floor`/`Truncate`, no `(int)` cast and no currency format string anywhere in the logic (project-wide grep matched only designer colour constants) | grep | project-wide |
+| **Three unguarded `double.Parse` entry points** for user-typed numbers: deposit amount (no guard at all), initial deposit (`<1999` only), account number (range-checked `100000..999999`, **not** integer-checked) | read | `DepositMoneyCus.cs:57`, `AddUser.cs:82`, `AddUser.cs:70-71` |
+
+The last two together are the evidence that S19a is reachable on the normal
+path: there is no barrier between a typed `0.10` and the ledger.
+
+---
+
+## Task 3 — the five most critical · **revised after the adversarial pass**
+
+> Supersedes `:2466`. The rubric is unchanged; the order and two of the entries
+> are not. Changes are marked.
+
+| # | Entry | Mode | Change |
+|---|---|---|---|
+| **1** | **Backdoor + authorization by username string** — `DL/MUserDL.cs:26-31,42-49`; `Form1.cs:66-73` | C | **Promoted** from 2 (attack 1) |
+| **2** | **Three disagreeing balance models, corrupted on the normal path** — `DL/CustomerDL.cs:198,217,234,248`; `WithDrawMoneyCus.cs:29` | A | **Demoted** from 1 |
+| **3** | **Falsifiable timestamps and unlogged privileged edits** — `DepositMoneyCus.cs:59`; `WithDrawMoneyCus.cs:28`; `TransactMoneyCus.cs:58`; `EditCustomer.cs:53-57`; `ViewCustomer.cs:105-108,115`; `AdminWindow.cs:21-26` | G (S16 limb) | **Replaces** mode-G-as-absence (attack 2) |
+| **4** | **Money and identity are `double`** — `BL/Admin.cs:17-19`; `BL/Customer.cs:12-19`; `AddUser.cs:70-77,82`; `TransactMoneyCus.cs:44`; `DL/CustomerDL.cs:139` | S19**a+b** | **Recombined**; argument replaced |
+| **5** | **No automated tests, and no seam to add them** — `BMS WinForm.csproj`; `DL/CustomerDL.cs:253-259` | S46 | **Unchanged**, defense strengthened |
+
+**Why 1 and 2 swap.** Rank 1's original irreversibility claim — *"there is no
+correct baseline to restore from"* (`:2506`) — overstates it. The corruption is
+confined to the derived `TotalMoney`; the history files are append-only and
+record every amount to the unit (probes 3–5), so a correct balance is
+recomputable offline and the change is detectable by diff (probe 1). Mode C is
+the opposite profile: probe 6 reached full operator rights in two clicks with no
+secret, and an escalated operator can rewrite any balance through
+`EditCustomer.cs:53` — a path that writes **no history row at all**, corrupting
+the one thing mode A leaves intact. C's damage strictly contains A's and adds
+unbounded PII and credential disclosure.
+
+*Concession recorded:* A's reconstructibility is **degraded, not intact** —
+unlogged admin edits and the orphan rows of audit finding A4 both break it. A is
+therefore *not maximal* on irreversibility rather than low, and the swap is
+decided on C's magnitude and availability, not on A being cheap to fix.
+
+**Why rank 3 changes shape.** Mode-G-as-absence cannot fill the assignment's
+required `Location in the code` field — the log already conceded this at `:2544`
+(*"there is no `file:line` to cite for code that was never written"*), and the
+independent Phase-3b pass failed to reproduce it for exactly that reason. It
+also restated F12 from the Task-2 slate, which the log itself warns against in
+the mirror direction at `:1182`. The **S16 limb keeps G's substance and gains
+citations**: every timestamp on the money paths is user-supplied, so the record
+is not merely absent but *falsifiable*, and privileged balance edits record no
+operator, no previous value and no time.
+
+### Deliberately not in the five — updated
+
+Unchanged from `:2594` except that **mode E must now be named explicitly**: it
+holds the single best-evidenced finding in the exercise (probe 5b, **5/5**, one
+comma in a name silently reassigns an account number and deposit and detaches
+the customer from their own record — `S14`, `DL/AdminDL.cs:37-53,96`). With the
+revision it appears nowhere in the ranked five, so it is listed in the
+"deliberately not" table **with its probe citation**, so a reader sees it was
+weighed rather than missed. It carries in the Task-1 report regardless.
+
+*Cost of the revision, stated plainly:* all executed probe evidence now sits in
+ranks 1–2; ranks 3–5 are static findings. That was true of the original five too
+(`:2591`), and the revision does not worsen it — but it means the empirical
+grounding of Task 3 rests on C and A alone.
+
+### Consequence for Task 4 — criterion (iv) sharpens
+
+The pending **F9 vs F12** pick (`:2625`) moves, because the ranking moved:
+
+| Capability | Mitigates | Was |
+|---|---|---|
+| **F9** · explicit role attribute | **rank 1** | rank 2 |
+| **F12** · append-only audit trail | **rank 3** | rank 3 |
+
+F9 now mitigates the **top-ranked** risk. F12's fit also improves rather than
+weakens under the revised rank 3: a server-generated, append-only trail
+addresses the *falsifiable* timestamps specifically, not just the missing
+record. Both remain live; criteria (i)–(iii) still decide, and the pick is
+still the human's.
+
+### Next gate
+
+Ranking is closed. Open items carried forward: the F9/F12 pick under criteria
+(i)–(iii), and the Phase-4 prerequisite that the DL types are `internal` (audit
+finding A5) so a test project needs `InternalsVisibleTo` or a visibility change.
+
+---
+
+## Decision — split the current state out of this log
+
+**Date:** 2026-07-25. **Owner:** human-proposed, AI-agreed. **Deviation from
+PLAN §3 and §5**, recorded deliberately.
+
+### Why
+
+This log is append-only and supersedes rather than edits, which is what makes it
+evidence. That same property makes it unfit as a working reference. The
+adversarial pass demonstrated the failure concretely: it retired three sentences
+of the S19a write-up but, per the Probe 3 convention, recorded the correction at
+`:2723` instead of editing `:2380-2403`. The dead text still reads as current to
+anyone going top-down — including whoever drafts the report — 340 lines before
+the note that retires it.
+
+That is not a defect in the log. It is what an audit trail is for. But it means
+"the current answer" cannot be safely read from here.
+
+### The split
+
+| File | Character | Authoritative for |
+|---|---|---|
+| `ANALYSIS_LOG.md` | append-only, never rewritten | **what happened when** — passes, probes, supersessions, attribution, changes of mind |
+| `FINDINGS.md` | mutable, kept current | **what is true now** about defects and risks |
+| `CAPABILITIES.md` | mutable, kept current | **what is true now** about missing functionality |
+
+Precedence, stated in both artifacts: on content the artifact wins; on
+chronology this log wins.
+
+### Consequences
+
+- **PLAN §5 is superseded.** It says to assemble the DOCX from this log; the
+  report is now drafted from the two current-state artifacts. Less risk of
+  importing a retired claim, and the 5-page budget is easier to hold against
+  documents that are already curated.
+- **PLAN §3's `FINDINGS.md`** was specified as a conditional overflow valve
+  ("only if the smell catalogue overflows"). It is now unconditional, and joined
+  by `CAPABILITIES.md`.
+- Analysis documents moved to `docs/`; `README.md` indexes them. The move is a
+  `git mv`, so `git log --follow docs/PREDICTION.md` still resolves to its
+  original pre-AI commit — the timestamp evidence is unaffected.
+
+### Forward pointers — superseded material in this log
+
+Do **not** quote the following from this file; the artifacts carry the current
+version.
+
+| Superseded here | Current in |
+|---|---|
+| `:2380-2403` S19a write-up — three sentences retired at `:2723` (drift is zero / not a "floats lose money" finding / the "show one wrong number" framing) | `FINDINGS.md` rank 4 |
+| `:2466-2600` the first ranked five — order and two entries changed by the adversarial pass | `FINDINGS.md` "The five most critical" |
+| `:2571` the apologetic S46 defense ("not a failure of the running system") | `FINDINGS.md` rank 5 |
+| `:1159-1546` F-series candidates, pre-flag and pre-prune | `CAPABILITIES.md` |
+
+Everything else in this log stands as written.
