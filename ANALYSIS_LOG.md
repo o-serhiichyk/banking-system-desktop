@@ -1500,3 +1500,510 @@ attempts.
 | Simple | Medium | Complex |
 |---|---|---|
 | F6, F10, F11, F13 | F1, F4, F5, F8, F9, F12, F14, F15 | F2, F3, F7 |
+
+---
+
+## Session 2 · Phase 3b — Code smell catalogue (independent pass + convergence)
+
+> **Unranked by design.** Grouped by category; order within and between groups is
+> arbitrary and carries no severity meaning. No "five most critical" selection is
+> made here — that ranking is the human's (PLAN §2 guardrail 1, PLAN §3b), and
+> the Fable adversarial challenge runs against *his* ranking, not this list.
+
+### Method
+
+A second Opus session was given the source and **explicitly forbidden to read
+`ANALYSIS_LOG.md` or `PREDICTIONS.md`** — no read, no grep, no search — and was
+asked to confirm in its report whether the restriction held. It did. The pass is
+therefore independent of the Phase-1 analysis, which makes the overlap between
+the two lists a genuine convergence measurement rather than an echo.
+
+It produced **46 findings**, all with `file:line`, static-only (the app was not
+run). It self-reported "41" with a category breakdown summing to 45; both tallies
+are wrong and the file contains 46. Nothing was missing — a miscount, not a gap.
+
+### Legend
+
+| Tag | Meaning |
+|---|---|
+| **[E]** | Backed by Phase-2 execution — an observed `.txt` diff or a performed action |
+| **[S]** | Static reading only; no execution claimed |
+| **[X]** | The detecting session marked it as needing execution to confirm |
+| **→ #n / An** | Converges with §5 risk register item *n* / audit finding *An* |
+| **[NEW]** | No counterpart in the §5 register or A1–A4 |
+
+### Convergence result
+
+The independent pass **reproduced all 18 register risks and all four audit
+findings A1–A4**, with one exception:
+
+- **#16 has no 3b counterpart for its "no logging, no audit trail" limb.** The
+  pass audited error handling in depth (5 findings) but never flagged the absence
+  of logging. Worth carrying into the report: an absence-of-an-entire-subsystem
+  finding is what a code-reading pass is structurally weakest at — you cannot
+  cite a `file:line` for something that was never written.
+
+It added **17 findings with no register counterpart**, plus one (S6, transfer
+settlement) that probe 4 observed but §5 never numbered.
+
+### Verification of the new claims (performed in this session)
+
+The load-bearing new findings were checked against the source before being
+recorded here:
+
+- **S3** — confirmed. `calculateReceivedMoney` has no owner guard
+  (`DL/CustomerDL.cs:246`) where its sibling has one (`:195`). **Mechanism
+  corrected:** `readSendHistory` *does* filter by account number at read time
+  (`DL/CustomerDL.cs:139`), so the list is not unfiltered in general. The defect
+  is that this sum alone lacks the second-line `UserName` guard, so stale rows
+  left by a previous login — the lists are never cleared — are counted here and
+  excluded by the other three. Same consequence, more precise cause.
+- **S7** — confirmed. `editCustomerData` copies eight fields, never `City`
+  (`DL/AdminDL.cs:126-133`).
+- **S8** — confirmed. `if (intialDeposit<1999)` against a "2000 or more" message
+  (`AddUser.cs:83`).
+- **S39** — confirmed. `Customer.ReceivedMoney` (`BL/Customer.cs:31`) has no
+  assignment anywhere in the solution.
+- **S26** — confirmed. The repo root holds only the five history files; no
+  `customers.txt` or `Users.txt`, so the startup-crash-from-root claim stands.
+
+---
+
+## correctness
+
+**S1 · Withdrawal credits the account instead of debiting it** — `WithDrawMoneyCus.cs:29` · **[E] → #4**
+`A.TotalMoney = A.TotalMoney + money;` — identical to the deposit handler at
+`DepositMoneyCus.cs:60`. *Misbehaves today.* Every withdrawal inflates the
+balance on the account screen (`CustomerHome.cs:35`), the admin grid and the
+bank-wide total (`TotalMoneyInBank.cs:36`), and the wrong value is persisted at
+logout (`CusForm.cs:138`). *Fix:* change `+` to `-`.
+
+**S2 · Available balance omits the initial deposit** — `DL/CustomerDL.cs:253-259`, `BalanceDetailsCus.cs:44,84-85` · **[E] → A2**
+`totalMoney()` returns `deposit + recieve - transact - withdraw` and never adds
+`AdminDL.Current.IntialDeposit`, though the same screen displays the initial
+deposit one line earlier as its own field. *Misbehaves today.* A customer with a
+2000 opening deposit and no transactions sees an available balance of 0; every
+customer's figure is understated by exactly their opening deposit. *Fix:* add
+`IntialDeposit` as a term (or pass it in).
+
+**S3 · `calculateReceivedMoney` has no owner filter** — `DL/CustomerDL.cs:241-252` · **[S] [NEW]**
+The three sibling methods (`:195`, `:214`, `:231`) each guard with
+`if (AdminDL.Current.UserName == C.UserName)`; this one sums every entry in the
+static `receivedMoneyList` unconditionally, and the list is never cleared on
+logout. *Misbehaves today.* Log in as A, open Balance Details, log out, log in as
+B, open Balance Details — B's "received" total includes A's incoming transfers.
+*(Mechanism refined in this session: `readSendHistory` filters by account number
+at read time, so the exposure is specifically to rows left over from a previous
+login within one process.)* *Fix:* add the owner guard inside the loop and clear
+the `CustomerDL` statics on logout.
+
+**S4 · Balance screen re-reads history files without clearing the lists** — `BalanceDetailsCus.cs:40-43` · **[E] → A1**
+The four `read*History` methods *append* to the static lists (e.g.
+`CustomerDL.cs:80`). Every other consumer clears first (`DepositHistory.cs:33`,
+`WithDrawHistory.cs:28`, `TransactHistory.cs:28`, `ReceivedMoney.cs:33`); this
+one does not. `DepositMoneyCus.cs:63` and `WithDrawMoneyCus.cs:32` additionally
+add the in-memory record on top of the file write. *Misbehaves today.* Navigating
+back to Balance Details doubles, triples, … every total; a deposit then counted
+twice. *Fix:* clear the four lists at the top of `BalanceDetailsCus_Load`.
+
+**S5 · Balance calculators mutate persisted state as a side effect** — `DL/CustomerDL.cs:198,217,234,248` · **[E] → #12**
+Methods named `calculate*` also write
+`AdminDL.Current.TotalMoney = AdminDL.Current.TotalMoney ± C.<amount>`. They are
+invoked from `btnRefresh_Click` (`BalanceDetailsCus.cs:76-83`), itself called on
+every form load (`:50`) and every Refresh click. *Misbehaves today.* Each press
+re-applies the entire transaction history to the stored balance, and
+`AdminDL.Current` is the same object held in `CustomersList`, so the inflated
+figure reaches `customers.txt` at logout (`CusForm.cs:138`). *Fix:* delete the
+four assignments; make the calculators pure.
+
+**S6 · Transfer never debits the sender or credits the recipient balance** — `TransactMoneyCus.cs:36-73` · **[E] → probe 4 (not numbered in §5)**
+The handler writes two history rows and adds to the in-memory `TransactList`, but
+never touches `AdminDL.Current.TotalMoney` nor the recipient `Admin` found in the
+loop at `:42-49` — the loop sets a `check` flag and discards the match.
+*Misbehaves today.* `Admin.TotalMoney` — shown on My Account Details, the admin
+grid and Total Money In Bank — is unaffected by transfers in either direction, so
+it permanently diverges from the history-derived figure. *Fix:* capture the
+matched recipient and apply `-amount` to sender, `+amount` to recipient before
+writing.
+
+**S7 · `editCustomerData` silently drops the City field** — `DL/AdminDL.cs:120-137` · **[S] [NEW]**
+The method copies Name, UserName, Password, AccountNumber, AccountType,
+PhoneNumber, IntialDeposit and TotalMoney from `update`, but never
+`A.City = update.City;` — even though `EditCustomer.cs:54` passes `cmbCity.Text`
+into the `update` object. *Misbehaves today.* Editing a city appears to succeed
+and closes the dialog, but the change is discarded; City search
+(`CitySearch.cs:31`) keeps matching the old value. *Fix:* add the missing
+assignment.
+
+**S8 · Initial-deposit minimum is off by one** — `AddUser.cs:83-86` · **[S] [NEW]**
+`if (intialDeposit<1999)` rejects, with the message "Deposit Money Should be More
+than 2000 or More". 1999 and anything in `[1999, 2000)` is accepted.
+*Misbehaves today.* Accounts open below the stated minimum. *Fix:* `< 2000`.
+
+**S9 · Copy-pasted navigation handler misses one Hide call** — `CusForm.cs:96-107` · **[X] [NEW]**
+Every sibling navigation handler hides all seven panels;
+`btnMyAccountDetails_Click` omits `giveFeedback1.Hide();` (compare `:63`, `:76`,
+`:89`, `:115`). *Misbehaves today* on the Feedback → My Account Details path —
+the feedback panel stays visible behind the account panel. Marked by the
+detecting session as needing execution for the exact visual result. *Fix:* add
+the missing `Hide()`.
+
+**S10 · `RemoveAt` inside a forward loop without index adjustment** — `DL/AdminDL.cs:110-119`, `DL/MUserDL.cs:98-108` · **[S] → #14**
+Both loops call `RemoveAt(i)` then `i++`, skipping the element that shifts into
+position `i`, and neither breaks after a match. *Latent.* With two records
+matching the same name/username/password — nothing enforces uniqueness on the
+edit path (S18) — only one is removed, leaving an orphaned credential in
+`Users.txt` or an orphaned row in `customers.txt`. *Fix:* decrement `i` after
+`RemoveAt`, or iterate backwards.
+
+## data-integrity
+
+**S11 · `storeCustomer` and `storeAllCustomers` write different record schemas** — `DL/AdminDL.cs:96,105,80-85` · **[E] → #9**
+`storeCustomer` emits `... + A.IntialDeposit + "," + A.IntialDeposit + "," +
+A.TotalMoney` — ten fields, initial deposit duplicated. `storeAllCustomers` emits
+nine, and `read_data` reads `TotalMoney` from field 9. *Latent.* A row written by
+the Add User path reads back with `TotalMoney = IntialDeposit` and the real tenth
+field dropped. Harmless only because a new account has `TotalMoney ==
+IntialDeposit`; any change making them differ at creation loses money silently.
+*Fix:* remove the duplicated term.
+
+**S12 · Transfer writes two files non-atomically** — `TransactMoneyCus.cs:62-63` · **[E, window only] → #6**
+`storeTransactHistory` (sender's debit) and `storeSendMoney` (recipient's credit)
+are two separate open/write/close cycles with no transaction, rollback or
+journal. *Latent.* If the second write fails — disk full, file locked, process
+killed between them — the sender is debited on the Balance Details calculation
+and the recipient is never credited. *Fix:* write both through one method that
+undoes the first append on failure, or write a combined journal record.
+
+**S13 · Balances are persisted only when the Log Out button is pressed** — `CusForm.cs:135-142,218-222` · **[S] → #7**
+`storeAllCustomers` runs only in `btnCusLogOut_Click`. The window-close icon calls
+`Application.Exit()` with no save, and there is no `FormClosing` handler.
+*Misbehaves today.* A customer who deposits and then closes with the X loses the
+`TotalMoney` update entirely — the history files keep the deposit line, so the
+two balance views diverge further. *Fix:* move the save into `FormClosing`.
+
+**S14 · CSV fields are never escaped or validated for the delimiter** — `DL/AdminDL.cs:96,105`, `DL/CustomerDL.cs:28,35,42,50,58`, `DL/MUserDL.cs:84,93`, `AddUser.cs:48-61` · **[E] → #8**
+Every writer does raw `a + "," + b + ...` on unvalidated `TextBox` content.
+*Latent but trivially reachable from the Add User form.* A single comma in Name
+shifts `AccountNumber`, `IntialDeposit` and `TotalMoney` one field left;
+`read_data` then parses a phone number as an account number and a balance from
+the wrong column. *Fix:* reject `,` in the Add/Edit text fields, or escape
+properly (see F4).
+
+**S15 · Feedback is a `RichTextBox` written as a single CSV line** — `GiveFeedback.cs:26-27`, `DL/CustomerDL.cs:58`, `GiveFeedback.Designer.cs:36` · **[S] [NEW]**
+`txtFeedBack` is a `RichTextBox`, so `.Text` may contain newlines; `storeFeedBack`
+writes `UserName + "," + FeedBack` via `WriteLine`. No empty-input check either.
+*Misbehaves today for any multi-line feedback.* Each embedded newline becomes a
+new record; `readFeedBacks` (`CustomerDL.cs:156-170`) renders continuation lines
+as separate entries attributed to a garbage username. *Fix:* replace newlines
+before constructing the `Customer`. *(Register #8 covered commas in free text,
+not newlines.)*
+
+**S16 · Transaction dates are user-chosen localized display strings** — `DepositMoneyCus.cs:59`, `WithDrawMoneyCus.cs:28`, `TransactMoneyCus.cs:58`, `DL/CustomerDL.cs:78,99,122,145` · **[S] → #17**
+The date comes from `DateTimePicker.Text`, so the customer picks it, and it is
+stored as e.g. `Thursday, 2 June 2022` — which contains a comma, forcing the
+reader hack `date = parse_data(record,3) + parse_data(record,4)` at four sites.
+No time component. *Misbehaves today:* history cannot be ordered or filtered,
+same-day transactions are indistinguishable, and any transaction can be
+backdated. *New on top of #17:* a machine with a different culture/long-date
+format produces a different comma count and mis-parses every subsequent field.
+*Fix:* store `DateTime.Now.ToString("o")`.
+
+**S17 · Deleting a customer leaves their history and a reusable account number behind** — `ViewCustomer.cs:105-108` · **[S] → A4 (mechanism [NEW])**
+Delete removes the row from `customers.txt` and `Users.txt` but touches none of
+the five history files. Account numbers are hand-entered (`AddUser.cs:70-81`) and
+uniqueness is checked only against currently-live accounts. *Latent.* Re-issuing
+a freed account number makes `readSendHistory` — which matches on account number
+(`CustomerDL.cs:139`) — credit the **new** customer with the deleted customer's
+incoming transfers. *(A4 observed the orphan rows already present in the shipped
+data; this supplies the mechanism by which they become someone else's money.)*
+*Fix:* never reuse account numbers.
+
+**S18 · Edit Customer skips the uniqueness checks the Add path enforces** — `EditCustomer.cs:44-59` vs `AddUser.cs:51-81` · **[S] → A3**
+Add User rejects a duplicate username, phone and account number; the edit dialog
+validates only the account-number range and lets `editCustomerData` overwrite
+anything. *Latent.* An edit can produce two accounts with the same account
+number — `TransactMoneyCus.cs:42-49` then accepts the transfer and
+`readSendHistory` credits both — or two identical usernames, making `setCurrent`
+bind the wrong account at login. *Fix:* extract the three uniqueness loops into a
+shared validator (see F6).
+
+**S19 · Money and account numbers are `double`** — `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19`, `AddUser.cs:70`, `AccountNumberSearch.cs:26` · **[S] → #11**
+Balances use binary floating point, and `accountNumber` — an identifier, never
+arithmetic — is also a `double`. `AddUser.cs:71` range-checks `100000..999999`
+but does not reject a fractional value, and account-number search compares
+`txtSearchAccountNumber.Text == A.AccountNumber.ToString()`. *Latent.* Repeated
+`+`/`-` accumulates representation error; `123456.5` passes validation;
+scientific-notation or trailing-`.0` formatting makes the string compare miss.
+*Fix:* `decimal` for money, `string`/`int` for account number.
+
+## security
+
+**S20 · Hard-coded admin credentials** — `DL/MUserDL.cs:26-31` · **[E] → #1**
+`if ((user.UserName == "Admin" || user.UserName == "admin") && user.Password ==
+"1234") return user;` — a back door compiled into the binary, checked before the
+real user list and unchangeable at runtime. *Misbehaves today.* Anyone with the
+binary or this source has full admin access: all balances, all plaintext
+passwords, arbitrary balance edits, account deletion. *Fix:* move the admin
+account into `Users.txt` with a hashed password and delete the literal check.
+
+**S21 · Admin authorization is decided by username string alone** — `DL/MUserDL.cs:42-49`, `Form1.cs:66-73` · **[E] → #2**
+`isAdmin` returns true for any `MUser` named `Admin`/`admin`, regardless of how it
+authenticated. `checkuser` will authenticate a *customer* named `admin` against
+that customer's own password (`MUserDL.cs:32-39`), and `AddUser` does not reserve
+the name. *Latent privilege escalation, reachable in two clicks* — register a
+customer named `admin` with any password, log in, land in `AdminWindow` with full
+rights. *Fix:* store a role on the record and have `isAdmin` read it.
+
+**S22 · Passwords stored, displayed and searched in plaintext** — `DL/MUserDL.cs:84,93`, `DL/AdminDL.cs:96,105`, `CustomerHome.cs:29`, `SearchResult.cs:28`, `EditCustomer.cs:29`, `ViewCustomer.cs:34` · **[E] → #3**
+Passwords are written verbatim and rendered on screen: the customer's own account
+panel, every admin search result, the edit dialog, and the admin `DataGridView`,
+which binds the whole `Admin` object including `Password`. `bin/Debug/Users.txt`
+and `customers.txt` ship in the repo with real-looking values. *Misbehaves
+today.* *Fix:* salted hash + hash comparison in `checkuser`; bind an explicit
+projection (as `AdminFeedback.cs:31` already does) and drop the password labels.
+
+**S23 · Password entry is unmasked outside the login screen** — `AddUser.Designer.cs`, `EditCustomer.Designer.cs`; contrast `Form1.Designer.cs:320` · **[S] [NEW]**
+The login form sets `UseSystemPasswordChar = true`; Add User and Edit Customer do
+not, so the password is typed and displayed in clear. *Latent* —
+shoulder-surfing / screen-share exposure during account creation and edit.
+*Fix:* set the property on both. *(Register #3 covered storage, not entry.)*
+
+**S24 · `setCurrent` leaves the previous customer bound when no match is found** — `DL/AdminDL.cs:27-36`, `Form1.cs:76-79` · **[E, probe 5b] → #18**
+`setCurrent` assigns `current` only inside the match branch; on no match it
+silently leaves the static at whatever it was, and `Form1` does not check the
+outcome before opening the customer window. `Current` is never reset on logout.
+*Latent.* `Users.txt` and `customers.txt` are maintained by separate code paths,
+so a credential present in one and absent from the other authenticates and then
+operates on the *previously logged-in* customer's account — deposits,
+withdrawals and transfers all hit the wrong account. *Fix:* return `bool`, set
+`current = null` on failure, abort the login.
+
+**S25 · No validation on transfer target or amount** — `TransactMoneyCus.cs:41-57`, `WithDrawMoneyCus.cs:26`, `DepositMoneyCus.cs:57` · **[E] → #5**
+The only validation is that the destination account exists. No overdraft check,
+no rejection of zero or negative amounts, no check that the destination is not
+the sender's own account. *Misbehaves today.* A customer can withdraw or transfer
+arbitrarily more than they hold, or enter a negative amount — a negative
+withdrawal credits the account and a negative transfer drains the recipient.
+*Fix:* amount and balance guards at the top of all three handlers (see F1).
+
+## error-handling
+
+**S26 · File reads run unguarded in the login form's constructor** — `Form1.cs:18-26` · **[S] → #10 (+[NEW] limb)**
+`AdminDL.read_data("customers.txt")` and `MUserDL.read_data("Users.txt")` execute
+in the constructor, before `InitializeComponent()`, with no existence check and
+no `try`/`catch`. *Misbehaves today when the CWD lacks the files.* **Verified in
+this session:** the repo root holds only the five history files — no
+`customers.txt`, no `Users.txt` — so launching with the repo root as working
+directory throws `FileNotFoundException` out of the constructor and the app dies
+before showing a window. *Fix:* guard with `File.Exists` and move into
+`Form1_Load`.
+
+**S27 · `double.Parse` on unconditionally-read fields crashes on blank lines** — `DL/CustomerDL.cs:138`, `DL/AdminDL.cs:73` · **[S] → #10 (sharpened)**
+`parse_data` returns `""` for a missing field (`CustomerDL.cs:171-187`), and
+`readSendHistory` parses field 1 before any guard. The other readers compare a
+*string* field first, so they tolerate blank lines. `AdminDL.read_data` defends
+against empty numeric fields (`:68-85`) but not garbage non-numeric ones.
+*Latent, and the shipped data already sets it up* — `depositHistory.txt` at the
+repo root contains a blank line. A blank line in `sendMoneyPath.txt` throws
+`FormatException` out of `BalanceDetailsCus_Load` (`:43`), which has no
+`try`/`catch`. *Fix:* skip whitespace records; use `TryParse`.
+
+**S28 · Streams are opened without `using` and closed only on the success path** — `DL/CustomerDL.cs:27,34,41,49,57,70,91,112,135,159`; `DL/AdminDL.cs:58,95,102`; `DL/MUserDL.cs:70,83,90` · **[S] [NEW]**
+Every reader and writer is `new StreamReader/Writer(...)` followed by a bare
+`.Close()` at the end of the method — no `using`, no `try`/`finally`. *Latent.*
+Any exception mid-method (a `FormatException` from S27, an IO error mid-write)
+leaves the handle open for the process lifetime, so the file stays locked and
+every later read or write fails — **including the `storeAllCustomers` at logout,
+which then silently loses the session's balances**. *Fix:* wrap each stream in a
+`using`. *(Chains into #7 / S13: a second, non-obvious path to silent balance
+loss.)*
+
+**S29 · Exceptions used for input validation, then swallowed into a message box** — `TransactMoneyCus.cs:50-53,69-72`; `AddUser.cs:55,66,73,79,85,97-100`; `DepositMoneyCus.cs:67-70`; `WithDrawMoneyCus.cs:36-39`; `EditCustomer.cs:60-63` · **[S] → #16 (error-handling limb)**
+Validation failures are raised as bare `throw new Exception("...")` and every
+handler ends in `catch (Exception error) { MessageBox.Show(error.Message); }`,
+which cannot distinguish a validation message from an IO failure or a
+`NullReferenceException`. *Misbehaves today.* A non-numeric amount shows the raw
+framework text "Input string was not in a correct format."; a genuine disk
+failure during `storeTransactHistory` is reported as an ordinary dialog and looks
+like a validation mistake rather than a lost transaction. *Fix:* `TryParse` +
+explicit messages; narrow the `catch`.
+
+**S30 · Grid and data-bound reads with no error handling at all** — `GiveFeedback.cs:24-30`, `AdminFeedback.cs:26-34`, `DepositHistory.cs:31-38`, `WithDrawHistory.cs:26-33`, `TransactHistory.cs:26-33`, `ReceivedMoney.cs:31-42`, `BalanceDetailsCus.cs:38-51` · **[S] [NEW]**
+Each opens or writes a file with no `try`/`catch` and no existence check, unlike
+the money-entry forms. *Latent* — a missing or locked history file throws an
+unhandled exception out of a `Load` handler and terminates the application rather
+than showing an empty grid. *Fix:* existence guard inside a `try`/`catch`.
+
+## duplication
+
+**S31 · `parse_data` copy-pasted verbatim into all three DL classes** — `DL/AdminDL.cs:37-53`, `DL/CustomerDL.cs:171-187`, `DL/MUserDL.cs:50-66` · **[E] → #8**
+Three byte-identical CSV field extractors. The implementation also cannot
+represent a field containing the delimiter: `if (record[i] == ',') comma++;`
+increments unconditionally. *Latent.* Any delimiter fix (needed by S14 and S16)
+must be applied in three places; missing one leaves a silently divergent parser
+on some read paths. *Fix:* one shared static helper.
+
+**S32 · Five search user-controls with the same body** — `NameSearch.cs:41-59`, `UserNameSearch.cs:27-45`, `CitySearch.cs:26-44`, `PhoneNumberSearch.cs:24-41`, `AccountNumberSearch.cs:21-39` · **[S] [NEW]**
+Identical loop, `check` flag, `SearchResult` dialog and "not found" box in five
+files, differing only in the compared property. All five open a modal
+`SearchResult` *inside* the loop, so N matches means N stacked dialogs. *Latent.*
+Any change — case-insensitive matching, or suppressing the password on the result
+screen (S22) — must be made five times. *Fix:* one
+`SearchBy(Func<Admin,string>, string)` helper; collect matches, then show once.
+
+**S33 · Five near-identical `store*` writers and five near-identical `read*` readers** — `DL/CustomerDL.cs:25-61`, `:67-170` · **[S] [NEW]**
+Each writer is the same three lines with a different concatenation; each reader
+the same `while ((record = file.ReadLine()) != null)` loop with a different field
+list and an inline owner filter. *Latent — and self-demonstrating:* this is
+exactly why the missing owner filter in S3 and the missing `Clear()` in S4 were
+never caught, because the copies drifted. *Fix:* extract `AppendLine(path, csv)`
+and `ReadRecords(path, map, keep)`.
+
+**S34 · Two divergent implementations of "what is this customer's balance"** — `DL/CustomerDL.cs:253-259` vs `DL/AdminDL.cs:138-147` / `CustomerHome.cs:35` · **[E] → A2**
+Balance Details derives the balance from the history files; My Account Details,
+the admin grid and Total Money In Bank read the separately-maintained
+`Admin.TotalMoney`. Nothing reconciles them, and the mutation sites for
+`TotalMoney` are incomplete (no transfer, wrong sign on withdrawal).
+*Misbehaves today.* The same customer sees two different balances on two screens
+of the same application. *Fix:* make `TotalMoney` computed from the history-based
+calculation; stop writing to it from the forms.
+
+**S35 · `SearchCustomer` dropdown handler exists twice** — `SearchCustomer.cs:20-66` and `:87-132` (only `_1` wired, `SearchCustomer.Designer.cs:95`) · **[S] [NEW]**
+Two byte-identical `SelectedIndexChanged` handlers. Both also fail to hide every
+sibling panel — the "Name" branch (`:22-28`, `:89-95`) never hides
+`phoneNumberSearch1` or `accountNumberSearch1`, and the "City" branch calls
+`citySearch1.Hide()` immediately followed by `citySearch1.Show()` (`:43-44`,
+`:110-111`). *Latent for the duplication; misbehaves today for the missing Hide
+calls* — selecting "Name" after "PhoneNumber" leaves the phone panel on screen.
+*Fix:* delete the unwired copy; hide all five panels before showing one.
+
+## dead-code
+
+**S36 · Empty method body left in the persistence layer** — `DL/CustomerDL.cs:63-66` · **[S] → #15**
+`public static void storeAllDepositHistory(string path)` has an empty body and no
+callers, but its name implies a rewrite-all counterpart to `storeAllCustomers`.
+*Latent* — a future caller expecting persistence gets a silent no-op. *Fix:*
+delete.
+
+**S37 · Unwired duplicate event handlers** — `AddUser.cs:24-28` (superseded by `btnAdd_Click_1`, `AddUser.Designer.cs:361`), `NameSearch.cs:36-39`, `AdminWindow.cs:29-34` · **[S] → #15**
+Empty or orphaned `_Click` bodies beside the real ones.
+`btnAddNewAccount_Click` additionally does `new AddUser().Show()` on a
+`UserControl` never added to a container — a no-op even if wired. *Latent* —
+reading the file, the empty `btnAdd_Click` looks like the Add button does
+nothing, and re-wiring the designer to the wrong overload silently disables the
+feature. *Fix:* delete all three.
+
+**S38 · Scaffold forms and controls with no logic and no references** — `New.cs`, `practice.cs`, `NewCustomerForm.cs`, `NewCustomerWindow.cs`, `HomeScreenCustomer.cs`, `UserControl1.cs` · **[S] → #15**
+Six designer-generated shells never instantiated anywhere in the solution
+(verified by searching for `new <Type>(` across all `.cs`), still carrying
+designer files and compiled into the binary. *Latent* — no runtime effect, but
+they inflate the surface a reviewer must read, and one (`practice`) is explicitly
+throwaway. *Fix:* remove the six file sets and their `<Compile>` entries.
+
+**S39 · Unused fields and redundant accessors** — `CusForm.cs:18,30`, `AdminWindow.cs:39`, `DL/MUserDL.cs:22-25`, `DL/AdminDL.cs:23-26`, `BL/Customer.cs:31` · **[S] [NEW]**
+Members written-but-never-read, unreachable, or shadowed: `private Admin A`
+assigned at `CusForm.cs:23` and never read; `private Form currentForm = null`
+never used; `getUsersList()` an *instance* method on a class only ever used
+statically, so uncallable; `getCustomerList()` duplicating the `CustomersList`
+property. *Latent defect specifically for `Customer.ReceivedMoney`* — it reads as
+the natural property for a received amount and always returns 0, so any new
+consumer binding to it silently shows zeros (`ReceivedMoney.cs:36` correctly
+binds `TransactMoney` instead). **Verified in this session: no assignment to
+`ReceivedMoney` exists anywhere.** *Fix:* delete the unused members.
+
+**S40 · Commented-out logic left inline** — `DL/CustomerDL.cs:191,204,210,221,227,238,244,250`; `BalanceDetailsCus.cs:45-49` · **[S] → #15**
+Each `calculate*` carries a commented-out `read*History(...)` at the top and a
+commented-out `list.Clear()` at the bottom — the exact two operations whose
+absence produces S4's double-counting. `BalanceDetailsCus` has a commented-out
+copy of the whole refresh block it then calls at `:50`. *Latent, but misleading
+in a specific way:* a reader concludes the clearing is handled and stops looking.
+*Fix:* delete the commented blocks after fixing S4 properly.
+
+## design
+
+**S41 · All persistence and business logic is static, with static mutable session state** — `DL/AdminDL.cs:13-17`, `DL/CustomerDL.cs:13-23`, `DL/MUserDL.cs:14-16` · **[E] → #13**
+`AdminDL.Current`, `AdminDL.CustomersList` and the five `CustomerDL` lists are
+`static` and publicly settable. The logged-in identity is ambient global state
+every screen reads directly (`CustomerHome.cs:27-35`, `CustomerDL.cs:74,95,116,
+139`), and lifecycle is managed by whoever remembers to `Clear()`. *Latent, but
+the direct enabler of two defects already listed* (S3's stale list across logins,
+S4's un-cleared lists). No method can be exercised without mutating process-wide
+state. *Fix:* instance classes with an injected session/repository, starting with
+`Current`.
+
+**S42 · File paths are hard-coded relative strings duplicated across 16 sites** — `DepositMoneyCus.cs:17`, `WithDrawMoneyCus.cs:16`, `TransactMoneyCus.cs:18-19`, `GiveFeedback.cs:17`, `AddUser.cs:17-18`, `Form1.cs:22-23`, `BalanceDetailsCus.cs:40-43`, `EditCustomer.cs:57`, `ViewCustomer.cs:107-108,115`, `CusForm.cs:138`, `DepositHistory.cs:34`, `WithDrawHistory.cs:29`, `TransactHistory.cs:29`, `ReceivedMoney.cs:34`, `AdminFeedback.cs:29` · **[S] → §4 / A6 (partial)**
+The same seven filenames appear as bare relative literals in sixteen places,
+resolved against the process working directory. The repo already contains two
+divergent copies of the data set — `bin/Debug/*.txt` and the repo root, with
+different contents (root `transactHistory.txt` has 8 rows, `bin/Debug` copy is
+empty). *Misbehaves today in the sense that which database the app uses depends
+on how it was launched;* a shortcut with a different "Start in" silently reads and
+writes a different, empty data set. *Fix:* centralize as
+`Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ...)` constants.
+
+**S43 · `Customer` overloads distinguished only by parameter order** — `BL/Customer.cs:33-39` vs `:40-46`, `:47-54` vs `:55-62` · **[S] [NEW]**
+`Customer(string, double, string)` builds a deposit record while
+`Customer(string, string, double)` builds a withdrawal; `Customer(string, double,
+string, double, string)` builds a sent record while `Customer(double, double,
+string, double, string)` builds a received one. Selection is purely positional
+and callers rely on it (`WithDrawMoneyCus.cs:30`, `CustomerDL.cs:100,146`,
+`TransactMoneyCus.cs:59-60`). *Latent.* Swapping two arguments at a call site
+silently binds a different overload and writes the amount into the wrong ledger
+field — the compiler cannot catch it. *Fix:* named static factories
+(`Customer.Deposit(...)`, `.WithDrawal(...)`, `.Sent(...)`, `.Received(...)`).
+
+**S44 · Screens call the persistence layer directly** — `DepositMoneyCus.cs:57-63`, `WithDrawMoneyCus.cs:26-32`, `TransactMoneyCus.cs:41-63`, `AddUser.cs:88-93`, `ViewCustomer.cs:105-108` · **[S] [NEW]**
+There is no service layer: `Click` handlers parse text, apply the balance
+arithmetic, build the domain object, append to the in-memory list *and* write the
+file. `BL/` holds only anemic data holders. *Latent — and structurally
+explanatory:* this is why the withdrawal sign error (S1), the missing overdraft
+check (S25) and the missing transfer settlement (S6) each live in a different
+form file rather than in one place. The money rules exist only inside UI event
+handlers and cannot be reused or checked centrally. *Fix:* extract a
+`TransactionService` with `Deposit/Withdraw/Transfer`.
+
+**S45 · Unguarded cast of the grid's bound item before the column check** — `ViewCustomer.cs:102-103` · **[X] [NEW]**
+`Admin A = (Admin)usersGV.CurrentRow.DataBoundItem;` runs on every content click,
+before the code decides whether Edit or Delete was hit. When the grid is bound to
+an anonymous-type projection or a sorted copy (`:81`, `:88`, `:95`),
+`CurrentRow` may not hold an `Admin`. *Latent* —
+`NullReferenceException`/`InvalidCastException` on a click in an unexpected
+state; marked by the detecting session as needing execution. *Fix:* move the cast
+inside the column branches; use `as` with a null check.
+
+## testability
+
+**S46 · No test project, and no seam to add one** — `BMS WinForm.csproj` (single `WinExe`, no test project in the solution), `DL/CustomerDL.cs:253-259`, `DL/AdminDL.cs:138-147` · **[S] [NEW]**
+Every money rule is either inside a `Click` handler or inside a `static` method
+that reads `AdminDL.Current` and opens files by relative path.
+`CustomerDL.totalMoney` is the only pure function in the money path, and it is
+`static` on an internal class with no coverage. *Latent* — S1 and S2 are both
+one-line arithmetic errors a single unit test over `totalMoney` would have
+caught. *Fix:* add a test project; make `totalMoney` (and the `calculate*`
+methods, once pure and parameterized on the lists) reachable from tests. *(See
+audit finding A5: the DL types are `internal`, so this needs `InternalsVisibleTo`
+or a visibility change — a Phase-4 decision.)*
+
+---
+
+### Distribution (for the human's reference — not an ordering)
+
+| Category | Count | Executed evidence | Static only |
+|---|---|---|---|
+| correctness | 10 | S1, S2, S4, S5, S6 | S3, S7, S8, S9, S10 |
+| data-integrity | 9 | S11, S12, S14 | S13, S15, S16, S17, S18, S19 |
+| security | 6 | S20, S21, S22, S24, S25 | S23 |
+| error-handling | 5 | — | S26–S30 |
+| duplication | 5 | S31, S34 | S32, S33, S35 |
+| dead-code | 5 | — | S36–S40 |
+| design | 5 | S41 | S42–S45 |
+| testability | 1 | — | S46 |
+| **total** | **46** | **17** | **29** |
+
+### What Task 3 needs next (human)
+
+1. Select the five most critical **by business risk**, not by category or by
+   count of citations. The catalogue above is deliberately flat.
+2. Then the Fable adversarial pass: *"argue the strongest case that I ranked
+   these wrong."* Keep or revise, and log why.
