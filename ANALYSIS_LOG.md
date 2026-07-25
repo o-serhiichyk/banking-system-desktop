@@ -1764,6 +1764,51 @@ drags in with it.
 
 ---
 
+## Task 2 — selected slate (human, from the 25 candidates)
+
+> Pruned from F1–F15 + G1–G10 by Oleksandr. The candidate lists above are left
+> intact so the selection is auditable against what was rejected.
+
+| # | Capability | Kind | Complexity |
+|---|---|---|---|
+| 1 | **F1** · Pre-transaction validation guard (funds, amount, self-transfer) | [INCOMPLETE] | Medium |
+| 2 | **F7** · Account status and non-destructive closure | [NEW] | Complex |
+| 3 | **F8+F10** · Credential protection at rest and on screen *(merged)* | [NEW] | Medium |
+| 4 | **F9** · Explicit role attribute, replacing username-string authorisation | [NEW] | Medium |
+| 5 | **F12** · Append-only audit trail for money and privileged operations | [NEW] | Medium |
+| 6 | **F14** · Atomic, recoverable file writes with backup | [NEW] | Medium |
+| 7 | **F15** · Transaction receipt and account statement | [NEW] | Medium |
+| 8 | **G1** · Product differentiation by account type (interest accrual) | [NEW] | Complex |
+| 9 | **G4** · Transaction and balance limits | [NEW] | Medium |
+| 10 | **G7** · Multiple accounts per customer | [NEW] | Complex |
+
+**F8+F10 merged.** Both address one capability — protecting the credential —
+split only by where the exposure occurs. At rest: written verbatim to
+`Users.txt` and `customers.txt` (`DL/MUserDL.cs:84`, `DL/AdminDL.cs:96,105`) and
+compared by string equality (`DL/MUserDL.cs:34`, `DL/AdminDL.cs:31`). On screen:
+the admin grid auto-generates a `Password` column from the bound `Admin` object
+(`ViewCustomer.cs:34`, `BL/Admin.cs:23`), and the value is rendered into plain
+labels on the customer's own profile (`CustomerHome.cs:29`) and in search results
+(`SearchResult.cs:28`), with no `UseSystemPasswordChar` on the Add/Edit password
+boxes (`AddUser.Designer.cs:146-152`, `EditCustomer.Designer.cs:107-112`) —
+only the login box has it (`Form1.Designer.cs:320`). Treating them separately
+would have shipped a slate where hashing "fixes" a problem that remains fully
+visible on the operator's screen; treating them as one makes the completeness of
+the fix the point. *Mitigates #3 in both limbs.*
+
+**Composition.** 9 `[NEW]` · 1 `[INCOMPLETE]` · **0 `[FIX]`** — Task 2 no longer
+restates the Task-3 catalogue. F1 is the sole overlap (S25), kept because a
+banking system with no funds check is the first capability a reviewer looks for;
+the overlap is disclosed rather than hidden. Complexity: 7 Medium, 3 Complex,
+0 Simple.
+
+**Still open:** the Medium pick for Task 4, against criteria (i)–(iv). Seven
+Medium candidates survive the prune, so criterion (iv) — *mitigates a risk that
+appears in the Task-3 ranking* — is still doing real work and cannot be applied
+until the five smells are ranked.
+
+---
+
 ## Session 2 · Phase 3b — Code smell catalogue (independent pass + convergence)
 
 > **Unranked by design.** Grouped by category; order within and between groups is
@@ -1863,9 +1908,15 @@ The four `read*History` methods *append* to the static lists (e.g.
 `CustomerDL.cs:80`). Every other consumer clears first (`DepositHistory.cs:33`,
 `WithDrawHistory.cs:28`, `TransactHistory.cs:28`, `ReceivedMoney.cs:33`); this
 one does not. `DepositMoneyCus.cs:63` and `WithDrawMoneyCus.cs:32` additionally
-add the in-memory record on top of the file write. *Misbehaves today.* Navigating
-back to Balance Details doubles, triples, … every total; a deposit then counted
-twice. *Fix:* clear the four lists at the top of `BalanceDetailsCus_Load`.
+add the in-memory record on top of the file write. *Misbehaves today.* **Trigger
+is per *login*, not per visit** — the independent pass restated the "every visit"
+version, which probe 2 disproved (`:652-659`): `btnBalanceDetails_Click` only
+calls `Show()`/`BringToFront()` (`CusForm.cs:109-120`) and cannot re-fire `Load`
+on an existing control, so the re-read runs once per `CustomerWindowPAge`
+instance and the static lists (`DL/CustomerDL.cs:13-17`) accumulate a second copy
+on the next login in the same process. Probe 1 observed 9000 → 11000 from a
+login and logout with **zero clicks**. *Fix:* clear the four lists at the top of
+`BalanceDetailsCus_Load`.
 
 **S5 · Balance calculators mutate persisted state as a side effect** — `DL/CustomerDL.cs:198,217,234,248` · **[E] → #12**
 Methods named `calculate*` also write
@@ -1945,7 +1996,9 @@ two balance views diverge further. *Fix:* move the save into `FormClosing`.
 
 **S14 · CSV fields are never escaped or validated for the delimiter** — `DL/AdminDL.cs:96,105`, `DL/CustomerDL.cs:28,35,42,50,58`, `DL/MUserDL.cs:84,93`, `AddUser.cs:48-61` · **[E] → #8**
 Every writer does raw `a + "," + b + ...` on unvalidated `TextBox` content.
-*Latent but trivially reachable from the Add User form.* A single comma in Name
+*Misbehaves today — executed in probe 5b (5/5 predictions exact).* The detecting
+session called this "latent but trivially reachable"; execution supersedes that.
+A single comma in Name
 shifts `AccountNumber`, `IntialDeposit` and `TotalMoney` one field left;
 `read_data` then parses a phone number as an account number and a balance from
 the wrong column. *Fix:* reject `,` in the Add/Edit text fields, or escape
