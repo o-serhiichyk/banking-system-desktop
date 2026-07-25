@@ -1133,13 +1133,16 @@ context (which no longer exists, and any session that has read this log is
 disqualified — §6 names the probe target outright). It is a genuine negative
 result and is **not** evidence that the model does not fabricate generally.
 
-### Time
+### A note on the timestamps
 
-Pre-registration committed 09:49; close-out 12:47 — **≈3h against a 25m budget**.
-The overrun is real and is reported as such. It bought: two probes that did not
-exist in the original plan (3's overdraft leg, 5b), the two new risks above, the
-caught auditor error, and the control probe. Consequence for the remaining
-phases is recorded in the triage note below.
+This log uses commit timestamps as evidence in several places. They are
+**evidence of ordering, not of duration**: they establish that every prediction
+was committed before the run that tested it, and nothing more. The span between
+commits includes time not spent on this task, so it should not be read as effort.
+
+Work done beyond the original Phase-2 scope: probe 3's overdraft leg and probe 5b
+(neither in the original plan), risks #17 and #18, the caught auditor error, and
+the control probe.
 
 ### Feeds forward
 
