@@ -34,7 +34,7 @@ Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**
 | 2 | Account status and non-destructive closure | [NEW] | Complex | S17, A4 | **Prevents recurrence** |
 | 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 | **Full** (S47 unreachable) |
 | 4 | Explicit role attribute | [NEW] | Medium | **rank 1** | **Partial** — one limb of two |
-| 5 | Append-only audit trail | [NEW] | Medium | **rank 3** | **Partial** — one limb of two |
+| 5 | **Append-only audit trail** ✅ *chosen for Task 4* | [NEW] | Medium | **rank 3** | **Partial** — one limb of two |
 | 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 | **Partial** on all three |
 | 7 | Transaction receipt and account statement | [NEW] | Medium | rank 2 | **Detects only** |
 | 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** rank 4 |
@@ -397,7 +397,99 @@ rank 1. Making the primary ledger's timestamps trustworthy means touching four
 file formats and every reader that parses them — which is why the standalone
 "system-generated timestamps" candidate was pruned in the first place.
 
-**Not yet decided.**
+---
+
+# ✅ Decision — capability 5, the append-only audit trail
+
+## Why it wins
+
+**It is the only candidate that changes no behaviour.** Every other Medium
+alters what the application does; this one only observes. Against a brief graded
+on *"safe, incremental improvements"* and *"working, maintainable code, not a
+complete production-ready implementation"*, that is decisive. The worst failure
+mode of a bad audit trail is a wrong log file; the worst failure mode of a bad
+validation guard is refusing legitimate withdrawals.
+
+**Its value is cross-cutting, not single-finding.** With before/after values, an
+actor and a system timestamp on every money operation and every privileged edit,
+these become detectable or reconstructible:
+
+| Finding | What the trail supplies |
+|---|---|
+| rank 1 | The escalated operator's actions become visible — currently indistinguishable from legitimate ones |
+| rank 2 | Probe 1's 9000 → 11000 **with zero clicks** becomes visible; the three-way divergence becomes measurable |
+| S4, S5 | The repeated recompute is recorded rather than silent |
+| S13 | Deposit recorded, no persist — the discrepancy becomes legible |
+| S28 | The write and its outcome are recorded |
+| S24 | The account actually operated on is recorded |
+| S3 | Cross-account contamination becomes visible |
+| S14 | Pre-corruption values retained, so repair becomes possible |
+| S17 | Operations tied to a customer at a point in time |
+| S48 | A partial replay source where none exists today |
+
+Roughly ten findings across five failure modes. No other capability on the slate
+reaches more than two or three. These failures also **cascade** — rank 1 corrupts
+the history that rank 2 leaves intact; S28 silently eats the durability S13 needs
+— and without a trail none of the chains are reconstructible.
+
+**Criterion (iv) is satisfied without being demoted.** It addresses ranked risk 3
+directly, so Tasks 2, 3 and 4 remain one argument.
+
+## Scope
+
+- A pure append-only writer in `DL/` — record formatting and ordering unit
+  tested table-driven, no file I/O in the assertions beyond a temp path.
+- Capture at the three money handlers, which **already have the actor in scope**:
+  `AdminDL.Current` at `DepositMoneyCus.cs:58`, `WithDrawMoneyCus.cs:27`,
+  `TransactMoneyCus.cs:59`. No plumbing required.
+- Capture at the two privileged paths — `EditCustomer` (previous and update
+  objects both in hand) and `ViewCustomer` delete (`:102` holds the target).
+- System-generated timestamps on the trail itself.
+
+## Assumptions and stated limitations
+
+1. **Operator identity is unavailable on the admin paths.** `AdminWindow()` takes
+   no parameter (`AdminWindow.cs:21-25`) and never learns who logged in.
+   Privileged entries therefore record *what changed and to whom, with
+   before/after values*, but not *who did it*. Closing this is a one-line
+   constructor change plus its call site at `Form1.cs:70`; left out to keep the
+   change additive, and named as a limitation rather than hidden.
+2. **This is detection, not prevention.** It makes ranks 1 and 2 visible; it does
+   not stop them. That is deliberate: in a legacy takeover you add observability
+   before you change behaviour, because you cannot safely fix what you cannot
+   see.
+3. **The primary ledger stays falsifiable.** The trail's own timestamps are
+   system-generated, but the four history files still take theirs from
+   `DateTimePicker.Text`. Rank 3's second limb is unaddressed — see Coverage.
+
+## Why not the alternatives
+
+**Capability 1 · validation guard** — the strongest rival, rejected on a
+regression path rather than on value. It must validate against *some* balance,
+and three disagree. Validating against `CustomerDL.totalMoney()` triggers **S2**:
+the function never adds `IntialDeposit`, so a customer with a 2000 opening
+deposit and no history computes to 0 available and **every withdrawal is
+refused**. A guard that bricks normal use for exactly the customers in the sample
+data is worse than no guard. Safe variants exist
+(`AdminDL.Current.TotalMoney`, or `totalMoney(...) + IntialDeposit`), but the
+capability carries a live way to leave the application worse and capability 5
+carries none. It also addresses only S25, which is below the ranked line, so
+choosing it would have required demoting criterion (iv).
+
+**Capability 4 · role attribute** — addresses the top-ranked risk but closes only
+one of its two limbs, and scoped naively as "add a role field" it converts a
+privilege escalation into a session-confusion bug via the fail-open `setCurrent`
+(see Coverage). Doing it properly means the role *plus* deleting the literal at
+`DL/MUserDL.cs:28` *plus* making `setCurrent` fail closed — the top of Medium,
+against a 75-minute budget that includes NUnit setup on .NET Framework. Also
+requires a positional record-format change and a data migration.
+
+## Forward note
+
+The same writer is where per-transaction limits (capability 9) and
+system-generated ledger timestamps would later hook in. Stated to show the design
+has a next step; **not built**, because over-building this task is the
+scope-discipline trap the brief is testing.
 
 ---
 

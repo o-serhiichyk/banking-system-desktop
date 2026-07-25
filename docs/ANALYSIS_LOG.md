@@ -2910,3 +2910,82 @@ version.
 | `:1159-1546` F-series candidates, pre-flag and pre-prune | `CAPABILITIES.md` |
 
 Everything else in this log stands as written.
+
+---
+
+## Task 4 — feature pick: capability 5, the append-only audit trail
+
+**Date:** 2026-07-25. Current statement of the decision and its scope lives in
+`CAPABILITIES.md`; this entry records **how the decision moved**, which is the
+part the report needs.
+
+### The recommendation was reversed, and why
+
+A third session produced a ranked shortlist — capability 1 (validation guard)
+first, capability 4 (role attribute) second, capability 5 (audit trail) third —
+and recommended capability 1. Its reasoning was sound and two of its points
+survive intact:
+
+- **Criterion (iv) is self-imposed.** Verified against the brief: the assignment
+  asks only that the chosen Medium be *"the best implementation candidate"*
+  (BRIEF.md:34). Nothing links Task 4 to the Task-3 ranking. Criterion (iv) comes
+  from PLAN §3a, not the spec. *This stands* — but it turned out not to bind,
+  since the chosen capability satisfies (iv) anyway.
+- **Capability 4 is the riskiest Medium on the slate.** Agreed and unchanged.
+
+It ranked capability 5 third on one objection: that capture requires threading
+operator identity from login through `AdminWindow` into its child controls —
+*"wide, shallow, and the wide part is UI plumbing you can't unit-test."*
+
+**The human challenged this, and checking the code collapsed the objection.** The
+actor is **already in scope** at all three money call sites — `AdminDL.Current`
+at `DepositMoneyCus.cs:58`, `WithDrawMoneyCus.cs:27`, `TransactMoneyCus.cs:59`.
+No threading is required for the money paths at all. The gap is confined to the
+two privileged paths, where `AdminWindow()` takes no parameter
+(`AdminWindow.cs:21-25`) — and even there the *target* and the before/after
+values are in hand (`ViewCustomer.cs:102`; `EditCustomer`'s previous/update
+pair), so what is lost is the actor only, not the change record.
+
+### The two arguments that decided it
+
+1. **Coverage was undercounted.** The prior analysis scored capability 5 as
+   "hits rank 3." With before/after values it is the detection layer for roughly
+   ten findings across five failure modes (table in `CAPABILITIES.md`), where no
+   other capability reaches more than two or three. The human's framing — *the
+   chain of problematic events* — is the operative point: these failures cascade
+   (rank 1 corrupts the history rank 2 leaves intact; S28 silently eats the
+   durability S13 needs), and no chain is reconstructible without a trail.
+2. **The safety filter inverts.** The shortlist's own filter was *"no way to
+   leave the app worse."* Capability 1 **changes behaviour** — it refuses
+   operations previously allowed — and carries a live regression path identified
+   earlier in this exercise: validated against `CustomerDL.totalMoney()`, S2
+   means a customer with an opening deposit and no history computes to 0
+   available and every withdrawal is refused. Capability 5 changes no behaviour
+   at all. On the filter as stated, it selects capability 5, not capability 1.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| The shortlist, the (iv)-is-self-imposed finding, the capability-4 risk analysis | **Third session (AI)** |
+| Challenging the third-place ranking of capability 5 — *"doesn't it cover more issues than documented? doesn't it help to understand the chain of problematic events?"* | **Human** |
+| Verifying that `AdminDL.Current` is already at the money call sites, collapsing the plumbing objection | **AI**, on the human's challenge |
+| Recognising that the safety filter selects capability 5 once capability 1's balance-choice regression is counted | **AI**, against its own prior recommendation |
+| The decision | **Human** |
+
+This is the third time in the exercise a human challenge reversed an AI
+position on evidence — after the *magnitude* correction (`:2342`) and the
+"shipped data is not the domain" correction (`:2745`). In each case the AI's
+reasoning was internally coherent and rested on an unchecked premise.
+
+### Recorded as not done
+
+- Criterion (iv) was **not** demoted. The shortlist proposed demoting it to a
+  tiebreaker so capability 1 could win; the chosen capability satisfies it
+  directly, so the question did not arise. The finding that it is self-imposed
+  is kept because it remains true and is worth one line in the report.
+- Operator identity on the privileged paths is **not** threaded — a stated
+  limitation, not an oversight.
+- Per-transaction limits and system-generated ledger timestamps hook into the
+  same writer and are **not** built. Over-building this task is the
+  scope-discipline trap the brief is testing.
