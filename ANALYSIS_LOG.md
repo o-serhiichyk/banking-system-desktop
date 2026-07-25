@@ -464,3 +464,83 @@ full rewrite (Log Out / edit / delete), so the probe must inspect
 **Net:** Phase-1 analysis, the Fable audit, and this cross-check converge. The
 Phase-2 validation queue stands as revised, with the Balance-Details double-count
 as priority 1 and the run-from-`bin/Debug` gate noted up front.
+
+---
+
+## Session 1 · Phase 2 — Validation · **PART A: pre-registered predictions**
+
+- **Date:** 2026-07-25
+- **Owner:** human-led; AI derived the expected arithmetic from the source, the
+  human executes the app and adjudicates each outcome.
+- **Committed before the app was run.** This section is deliberately a separate
+  commit from the results below: a prediction written after seeing the outcome
+  is not evidence. The numbers here are computed *from the code*, so each probe
+  is a pass/fail test, not a description of whatever happened.
+
+### Baseline mechanism
+
+No side-copy snapshot was needed: all seven `bin/Debug/*.txt` data files are
+**tracked in git and clean at HEAD**, so the committed tree *is* the Phase-0.5
+baseline. Each probe is therefore
+`run app → git diff -- "BMS WinForm/bin/Debug/*.txt" → git checkout -- …` to
+reset. `core.autocrlf=true`, so diffs show content changes only.
+
+**Run gate (from Phase 1·rev):** the app must be launched with **CWD =
+`BMS WinForm\bin\Debug`**; `customers.txt`/`Users.txt` exist only there and are
+opened by relative path (`Form1.cs:22-23`).
+
+### Baseline facts the predictions are computed from
+
+Test account — `customers.txt` line 1:
+`Ali,Haider,15,Current,Multan,2131,123456,2000,9000`
+(user `Haider`, password `15`, account `123456`, initial deposit `2000`, **stored
+balance `9000`**). Haider's history in the shipped data: **one** deposit row
+(`Haider,2000,…`), **no** withdraw rows, and `transactHistory.txt` /
+`sendMoneyPath.txt` are empty. So every `calculate*` contribution for Haider is
+known exactly: deposit `2000`, withdraw `0`, transact `0`, received `0`.
+
+### Mechanism under test (the claim being pre-registered)
+
+`BalanceDetailsCus` is a designer-instantiated child UserControl of
+`CustomerWindowPAge` and is **not** `Visible=false` in the designer
+(`CusForm.Designer.cs:434-440`). In WinForms a visible child control is created —
+and its `Load` fires — when the parent form is shown, *before* the parent's own
+`Load` handler hides it (`CusForm.cs:144-153`). Therefore
+`BalanceDetailsCus_Load` (`BalanceDetailsCus.cs:38-51`) is predicted to run
+**once per login, at window construction, with no user interaction** — reading
+the four history files and then calling `btnRefresh_Click` (`:50`), which runs
+the four side-effecting `calculate*Money()` methods that mutate
+`AdminDL.Current.TotalMoney` (`DL/CustomerDL.cs:198,217,234,248`).
+`AdminDL.setCurrent` assigns a **reference into `customersList`**
+(`DL/AdminDL.cs:33`), so that mutation is what Log Out flushes to disk
+(`CusForm.cs:138` → `DL/AdminDL.cs:100-109`).
+
+> ⚠️ **Recorded disagreement with the Phase-1·rev Fable audit.** The audit states
+> the history lists "duplicate on **every visit**" to Balance Details. Reading
+> the control lifecycle, that looks wrong: `btnBalanceDetails_Click` only calls
+> `Show()`/`BringToFront()` (`CusForm.cs:109-120`), which does **not** re-fire
+> `Load` on an already-created control. The duplication should occur **per
+> login**, not per navigation. Probe 2 is designed to settle this by execution.
+> Either the builder or the auditor is wrong here, and the app decides — this is
+> the cross-model check paying out.
+
+### Pre-registered predictions
+
+| # | Probe (all start from a clean baseline) | Predicted result | What it falsifies / confirms |
+|---|---|---|---|
+| **1** | Log in as `Haider`/`15`. **Touch nothing.** Click **Log Out**. | `customers.txt` line 1 changes `…,2000,`**`9000`** → `…,2000,`**`11000`** (+2000 = Haider's deposit history, added once by the auto-refresh). No other line changes; no history file changes. | Balance-Details auto-corruption at login. If the row is unchanged, my `Load`-at-construction reading is **wrong** and the corruption needs a navigation to trigger. |
+| **2** | **One process, two logins.** (a) Log in, open **Balance Details**, record the six fields. (b) Navigate **Home** → back to **Balance Details**, record. (c) Click **Refresh** once, record. (d) **Log Out**. (e) Log in again as Haider, open **Balance Details**, record. (f) Log Out. | Displayed **Deposit** goes `2000` → `2000` → `2000` → **`4000`**; Available tracks it (`2000`→`4000`); Initial stays `2000`. Stored balance walks `9000` → 11000 (a) → 13000 (c) → written at (d) → 17000 (e) → **`17000`** on disk after (f). | Settles builder-vs-auditor by execution. Deposit stepping at (b) proves the auditor's **"every visit"**; stepping only at (e) proves **per login** (`Load` fires once per window instance; the static history lists are never cleared). Also exhibits the **third balance model** — the screen says `2000` while the stored balance is `13000`. |
+| **3** | Log in. **Withdraw Money** → amount `500` → Confirm → Log Out. | `withDrawHistory.txt` gains `Haider,500,<date>`. `customers.txt` = **`11500`** (9000 + 2000 auto + **500 added, not subtracted**). A correct system would store `8500`. | The withdrawal sign bug (`WithDrawMoneyCus.cs:29` adds where `DL/CustomerDL.cs:217` subtracts) — confirmed to the exact currency unit. |
+| **4** | Log in. **Transact Money** → account `454545` (user `T`), any purpose, amount `300` → Confirm. Then retry with amount `999999` (exceeds balance) and again to **own** account `123456`. Log Out. | All three transfers **succeed** with no error. `transactHistory.txt` gains `Haider,454545,<purpose>,300,<date>`; `sendMoneyPath.txt` gains `454545,123456,<purpose>,300,<date>` (two separate non-atomic writes). `customers.txt` Haider = **`11000`** — *unchanged by the transfers*; T's row `191437` also unchanged. | No funds check, no amount validation, no sender≠recipient guard, **no debit at transfer time**, and the two-file non-atomic write — in one run. |
+| **5** | Log in as **`Admin`/`1234`** (credentials appear nowhere in the data files). **Add Account**: Name `Test`, user `zz`, password `zz`, AccountType `Current`, City `Lahore`, phone `03001234567`, account `222222`, initial deposit `2000`. **Inspect `customers.txt` immediately, before any Log Out/edit/delete.** | Backdoor login succeeds → AdminWindow. Appended row has **10 fields** with the initial deposit twice: `Test,zz,zz,Current,Lahore,03001234567,222222,2000,2000,2000`, while every existing row has 9. `Users.txt` gains `zz,zz`. | The hardcoded backdoor (`DL/MUserDL.cs:28`) **and** the writer schema mismatch (`storeCustomer` `DL/AdminDL.cs:96` = 10 fields vs `storeAllCustomers` `:105` = 9). Must be read before a full rewrite silently repairs it to 9. |
+| **6** | *(if time)* As admin, create a customer with username **`admin`**, password `zzz`. Log out, log in as `admin`/`zzz`. | Lands in **AdminWindow**, not the customer window. | Privilege escalation by username string (`DL/MUserDL.cs:42-49` checks the name only, never a role or the password). |
+| **7** | *(if time)* Log in. **Deposit** `1000` → Confirm → close with the window **"X"**, not Log Out. | `depositHistory.txt` gains `Haider,1000,<date>` but `customers.txt` stays at **`9000`** — the deposit is recorded in history and lost from the balance. | Durability depends on which control the user closes with (`CusForm.cs:218-222` `Application.Exit()` with no flush vs `:135-142`). |
+
+**Process hygiene (or the arithmetic won't reproduce):** every probe except #2
+runs in a **fresh process from a reset baseline** — close the app, restore the
+data files, relaunch. `CustomerDL`'s five history lists are `static` and are
+**never cleared** (`DL/CustomerDL.cs:13-17`), so state leaks across logins within
+one process; probe #2 exploits exactly that, the others must avoid it.
+
+Probes 1–5 are the priority set; 6–7 are cheap add-ons. Results, hit rate, and
+the control probe are recorded in Part B below.
