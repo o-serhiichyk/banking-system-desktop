@@ -2460,3 +2460,176 @@ brief — a safe, incremental improvement — is the exact activity this makes
 unsafe. It also has a direct Phase-4 consequence: the DL types are `internal`
 (audit finding A5), so a test project needs `InternalsVisibleTo` or a visibility
 change before any of this is testable.
+
+---
+
+## Task 3 — the five most critical, ranked by business risk
+
+> Ranked with the rubric above: **likelihood × magnitude × irreversibility**,
+> magnitude read as damage to the bank rather than money lost.
+
+### Attribution of this ranking
+
+Recorded precisely, because the division of labour is itself part of what this
+exercise reports:
+
+| Contribution | Owner |
+|---|---|
+| The three rubric axes | **Human** — stated as "can cause a lot of damage too easily" / "potential damage is unlimited" / "damage can't be undone" |
+| Priority failure modes (A, B, C, G) | **Human** |
+| Correcting *magnitude* from money-lost to damage-to-the-bank | **Human** — argued against the AI's initial framing and won the point; the AI had ranked S19a below the line on a money-lost test |
+| Promoting S19a on foundational grounds | **Human**-initiated, AI-refined |
+| Promoting S46 (no tests) | **Human**-initiated |
+| Assembling the final five and their order | **AI-proposed, human-reviewed and adopted** |
+
+The AI did not originate the criteria and did not originate two of the five
+entries; it assembled and ordered them. Where the human's initial mode selection
+(A, B, C, G) diverges from the final five, the divergence is deliberate and noted
+below.
+
+---
+
+### 1 · The balance is wrong on the normal path — mode A
+
+**Lead: S5**, with S1 and S6. `DL/CustomerDL.cs:198,217,234,248`;
+`WithDrawMoneyCus.cs:29`; `TransactMoneyCus.cs:36-73`.
+
+Three balance models disagree simultaneously and all three are corrupted: the
+incremental in-memory one, the side-effecting recompute, and the displayed one.
+Probe 2 observed **2000 on screen, 13000 in memory and 9000 on disk for one
+account at one instant**; probe 1 moved a stored balance **9000 → 11000 with a
+login and a logout and zero clicks**.
+
+- *Likelihood* — certain. No attacker, no unusual input, no edge case; ordinary
+  use is sufficient.
+- *Magnitude* — the single fact a bank exists to know is wrong.
+- *Irreversibility* — there is no correct baseline to restore from. The truth
+  cannot be recomputed because every candidate truth is itself corrupted.
+
+Not addressed by the Task-2 slate (F2 and F3 were deliberately pruned as `[FIX]`
+items), so this is carried entirely by Task 3.
+
+### 2 · Authorization is a username string, plus a compiled-in backdoor — mode C
+
+**S21** with **S20**. `DL/MUserDL.cs:42-49`, `:26-31`; `Form1.cs:66-73`.
+
+`isAdmin` returns true for any user named `Admin`/`admin`, consulting neither
+password nor role, and a hardcoded `Admin`/`1234` pair is accepted before the
+user store is read. Probe 6 registered an ordinary customer named `admin` with a
+self-chosen password and reached the admin console with full rights: every
+customer's PII, every plaintext password, arbitrary balance edits, deletion.
+
+- *Likelihood* — two clicks, no secret required.
+- *Magnitude* — unbounded; every account, every credential, every balance.
+- *Irreversibility* — compounded by rank 3: an escalated operator is
+  indistinguishable from a legitimate one.
+
+Addressed by **F9** on the Task-2 slate — the criterion (iv) link.
+
+### 3 · Nothing is recorded; no discrepancy is reconstructible — mode G
+
+**Register #16**, with **S16**. `DepositMoneyCus.cs:64,69`;
+`EditCustomer.cs:55-57`; `ViewCustomer.cs:105-108,115`; `AdminWindow.cs:21-26`.
+
+No logging of any kind. A privileged balance edit records no operator, no
+previous value and no time; `AdminWindow` never even receives the identity of the
+operator who opened it. What timestamps exist are user-supplied
+(`DepositMoneyCus.cs:59`, `WithDrawMoneyCus.cs:28`, `TransactMoneyCus.cs:58`), so
+the record is not merely absent but **falsifiable**.
+
+- *Likelihood* — not an event; a permanent property.
+- *Magnitude* — after any discrepancy, the first question has no answer.
+- *Irreversibility* — maximal, and a multiplier on all four other entries.
+
+Also the **one register item the independent Phase-3b pass failed to reproduce**
+(`:1801`) — there is no `file:line` to cite for code that was never written.
+Addressed by **F12** on the Task-2 slate.
+
+### 4 · Money is not represented exactly — S19a
+
+`BL/Admin.cs:17-19`, `BL/Customer.cs:12-19`.
+
+**Not a "floats lose money" finding, and must not be argued as one** — measured
+drift in this codebase is currently zero, since every shipped amount is a whole
+number and `double` holds integers exactly to 2^53. It ranks because:
+
+- *Exactness is the guarantee a ledger exists to provide.* `double` cannot
+  supply it, so no reconciliation between the rank-1 balance models can ever be
+  proven exact — only approximately equal.
+- *It multiplies rank 3.* With no audit trail, a rounding artifact and a
+  fraudulent adjustment are indistinguishable.
+- *It is live once the Task-2 slate is built.* G1 (interest accrual) produces
+  fractional amounts by construction, and `double.Parse` already accepts
+  `"10.50"` today (`DepositMoneyCus.cs:57`).
+
+*Anticipated challenge and rebuttal recorded at S19a above.*
+
+### 5 · No automated tests, and no seam to add them — S46
+
+`BMS WinForm.csproj` (single `WinExe`, no test project); `DL/CustomerDL.cs:253-259`.
+
+Not a failure of the running system — a property of the **remediation path**, and
+this assignment is explicitly about safe, incremental improvement. Every fix to
+ranks 1–4 must be made in code where the money rules live inside `Click` handlers
+(S44) reading global static state (S41), with nothing asserting that working
+behaviour survives the change. Ranks 1 and 4 are both one-line arithmetic
+defects that a single unit test would have caught.
+
+Direct Phase-4 consequence: the DL types are `internal` (audit finding A5), so
+`InternalsVisibleTo` or a visibility change is a prerequisite before any of this
+is testable.
+
+---
+
+### The five as an argument
+
+They are ordered to read as a sequence rather than a sorted defect list:
+
+> **It is broken now (1). It is open now (2). You cannot tell what happened (3).
+> You cannot prove it right (4). And you cannot safely fix it (5).**
+
+Three of the five are structural rather than incident-shaped, so ranks 1 and 2
+carry the executed probe evidence that keeps the assessment grounded.
+
+### Deliberately not in the five
+
+Named as decisions, not gaps:
+
+| Mode | Representative | Why below the line |
+|---|---|---|
+| **B** money silently disappears | S13, S28, S48 | Real and partly latent; durability is addressed by F14 on the Task-2 slate |
+| **E** one character destroys an account | S14 | The most vivid executed evidence (probe 5b, 5/5) and the strongest alternative to rank 5 — displaced by S46 because S46 speaks to *how the remediation goes*, which this assignment is about |
+| **F** no control on amounts or funds | S25 | Addressed by F1 on the Task-2 slate |
+| **D** operations against the wrong account | S24, S19b | Mostly latent |
+| **H** the app dies on shipped data | S26, S27 | Availability only, and recoverable — lowest on two of the three axes |
+
+The human's initial mode priorities were **A, B, C, G**. B was displaced by S19a
+and S46, both of which entered after the modes were chosen and both of which
+outrank B on irreversibility. Recorded so the change of mind is visible rather
+than silently smoothed over.
+
+### Consequence for Task 4 — criterion (iv) is now decidable
+
+Criterion (iv) requires the chosen Medium capability to mitigate a **ranked**
+risk. Against the five above, the Task-2 slate narrows to:
+
+| Capability | Complexity | Mitigates |
+|---|---|---|
+| **F9** · explicit role attribute | Medium | rank 2 |
+| **F12** · append-only audit trail | Medium | rank 3 |
+
+F1 (Medium) addresses mode F, which is below the line; F14 addresses mode B,
+also below the line. The remaining Medium items on the slate — F8+F10, F15, G4 —
+do not mitigate a ranked risk directly.
+
+**The pick between F9 and F12 is not made here.** It remains the human's, and is
+subject to criteria (i)–(iii) — genuinely Medium, small blast radius, unit-
+testable — which have not yet been applied.
+
+### Next gate
+
+The Fable adversarial pass, run against **this** ranking: *"argue the strongest
+case that these five are ranked wrong."* Keep or revise, and log the reasoning
+either way. Expect the attack on ranks 4 and 5 — that they are not code smells —
+where the answer is the task's own wording, *"code smells **or engineering
+risks**."*
