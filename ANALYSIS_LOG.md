@@ -2321,3 +2321,142 @@ or a visibility change — a Phase-4 decision.)*
    count of citations. The catalogue above is deliberately flat.
 2. Then the Fable adversarial pass: *"argue the strongest case that I ranked
    these wrong."* Keep or revise, and log why.
+
+---
+
+## Task 3 — ranking framework, evidence restructure, late additions
+
+> The ranking itself is still the human's and is recorded separately once made.
+> This section fixes the *method* and the *evidence*, not the order.
+
+### Ranking rubric (human-defined)
+
+Three axes, applied to business risk rather than tool severity:
+
+| Axis | Question |
+|---|---|
+| **Likelihood** | How easily is it triggered — normal use, unusual input, or a deliberate attacker? |
+| **Magnitude** | **Damage to the bank** — not money lost |
+| **Irreversibility** | Once it happens, can it be detected and undone? |
+
+**On the magnitude definition.** It was initially applied as *money lost*, which
+ranks a systematically inexact ledger as trivial because the per-transaction
+drift is ~1e-16 relative. That test is wrong for a bank: exactness is a
+categorical property of a ledger, not a quantity to be minimised. A ledger that
+cannot be *proven* to balance fails its purpose at any magnitude, and the cost is
+institutional and regulatory rather than monetary. Magnitude is therefore defined
+as damage to the bank, which is the reading a banking reviewer would assume
+anyway. This is why S19a ranks despite negligible measured drift, and the
+correction is recorded because the rubric and the ranking must not disagree.
+
+### Failure-mode map
+
+46+ findings resolve to eight failure modes. Ranking five *modes* and taking the
+best-evidenced representative of each is a tractable decision; ranking 49 flat
+items is not. Membership below; no ordering is implied.
+
+| Mode | Members | Evidence status |
+|---|---|---|
+| **A** · The balance is wrong on the normal path | S1, S2, S4, S5, S6, S34 | all executed |
+| **B** · Money silently disappears | S13, S28, S12, S11, **S48** | S13 live *by reading* — probe 7 deliberately skipped (`:1115`), the one "live" claim resting on static evidence; rest latent |
+| **C** · Anyone becomes an operator; every credential is readable | S20, S21, S22, S23, **S47**, **S49** | S20–S22 executed (probes 5a, 6); S23, S47, S49 static |
+| **D** · Operations execute against the wrong account | S24, S3, S17, S18, **S19b** | **S24 only** executed (probe 5b); S3 static — probe 2 executed the enabling mechanism, not the missing guard |
+| **E** · One typed character destroys an account | S14, S15, S31, S16 (culture limb) | S14 executed, probe 5b 5/5 |
+| **F** · No control on amounts or funds | S25 | executed, probes 3 **and** 4 |
+| **G** · Nothing is recorded; no discrepancy is reconstructible | register #16, S16 (falsifiable timestamps) | absence — the one register item the independent 3b pass failed to reproduce (`:1801`) |
+| **H** · The app dies on data it already ships | S26, S27, S30 | S26 verified in-session; S27 armed by the blank line in the root `depositHistory.txt` |
+
+Catalogued but unassigned: S7, S8, S9, S10, S29, S32, S33, S35–S45, S46
+(S46 is cross-cutting — see below).
+
+---
+
+### S19 split into two limbs
+
+The original S19 conflated a foundational property with a live correctness
+defect. They rank on different grounds and are separated so each can be cited
+from the argument it actually supports.
+
+**S19a · Money is not represented exactly** — `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19` · **[S] → #11**
+Balances and amounts are binary floating point. *Measured drift in this codebase
+is currently zero* — every shipped amount is a whole number and `double` holds
+integers exactly to 2^53 — so this is **not** a "floats lose money" finding, and
+should not be argued as one.
+
+It ranks on three other grounds:
+
+1. **Exactness is the property, not accuracy.** A ledger's job is to be provably
+   balanced. `double` cannot guarantee that, so no reconciliation between the
+   three competing balance models (mode A) can ever be proven exact, only
+   approximately equal.
+2. **It multiplies mode G.** With no audit trail (#16), a rounding artifact and a
+   fraudulent adjustment are indistinguishable. Drift manufactures permanent
+   noise that conceals exactly what an audit trail exists to detect.
+3. **It is live, not hypothetical, the moment the Task-2 slate is built.** G1
+   (interest accrual) produces fractional amounts by construction, and
+   `double.Parse` already accepts `"10.50"` today (`DepositMoneyCus.cs:57`) —
+   nothing rejects a fractional deposit now.
+
+*Anticipated challenge:* "show one wrong number in the shipped data." There is
+none. The answer is that the defect is the **absence of a guarantee**, the
+guarantee is what a ledger is for, and fractional input is already accepted.
+*Fix:* `decimal` for all monetary fields.
+
+**S19b · Account numbers are `double`, and identity is decided by float equality** — `BL/Admin.cs:19`, `AddUser.cs:70-77`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139`, `AccountNumberSearch.cs:26` · **[S] [NEW] → mode D**
+An account number is an identifier, never a quantity, and three separate identity
+decisions are made with `==` on a `double`: the uniqueness check
+(`AddUser.cs:77`), the transfer recipient lookup (`TransactMoneyCus.cs:44`) and
+the received-money filter (`DL/CustomerDL.cs:139`). `AddUser.cs:71` range-checks
+`100000..999999` **without rejecting a fraction**, so `123456.5` is a valid
+account number — under an error message reading "Account Number Should be of 6
+Character". *Misbehaves today:* that account becomes an identity key; a transfer
+addressed to `123456` does not match it, and `AccountNumberSearch.cs:26`
+string-compares against `.ToString()`. This is a correctness defect in mode D
+(operations against the wrong account), not a precision concern.
+*Fix:* `string` (or `int`) for account numbers.
+
+---
+
+### Late additions to the catalogue (third session, verified here)
+
+**S47 · Credentials are in git history, not merely in plaintext at rest** — `.gitignore:8-10`, `BMS WinForm/bin/Debug/Users.txt` · **[S] [NEW] → mode C**
+Distinct from S22 in **remediation cost**, which is the point. `bin/Debug/*.txt`
+is committed deliberately (`.gitignore:8-10` documents the choice, so the app
+runs with zero build), and the credential files are tracked. **Verified:**
+`Users.txt` entered the repository in the original author's first commit
+`5518017`, carrying `Haider,15`, `T,1`, `Saleem,123`. Hashing passwords going
+forward does not remove those — they are permanent in history absent a rewrite,
+and the deliverable is a **public fork**, so publishing propagates them.
+*Honest scope:* this is sample data in an already-public upstream repository, so
+no live customer secret is newly exposed; the finding is that committing the live
+datastore makes credential leakage permanent and unfixable in place. *Fix:* stop
+tracking the datastore; ship seed data separately from the working files.
+(Rewriting history is not available here without destroying the fork's
+attribution story — PLAN §0.)
+
+**S48 · No backup or disaster recovery for the datastore as a whole** — `DL/AdminDL.cs:100-109`, `DL/MUserDL.cs:88-97` · **[S] [NEW] → mode B**
+Distinct from F14/S12/S28, which address corruption *during* a write. Nothing
+addresses the datastore being lost outright: there is no export, no copy, no
+retained generation, no restore path. `bin/Debug/*.txt` is the bank's entire
+database, and it lives in a build-output directory — a `clean` or a rebuild is a
+plausible way to destroy it. *Fix:* an export/restore path, and move the working
+data out of `bin/`.
+
+**S49 · Authentication is brute-forceable today** — `Form1.cs:60-87`, `DL/MUserDL.cs:32-39` · **[S] [NEW] → mode C**
+G6 files lockout as a *missing capability*; this records the same fact as a
+**present** risk. There is no attempt counter, no delay and no lockout, and the
+shipped passwords are one to three characters (`15`, `1`, `123`, `12`, `a`,
+`zzz` — observed in probe 6). The keyspace is small enough to exhaust by hand.
+*Fix:* attempt counter with lockout, plus a password policy.
+
+### S46 · No automated tests — cross-cutting, not a mode member
+
+S46 (no test project, no seam) is recorded outside the mode map because it is not
+a failure mode of the running system; it is a property of the **remediation
+path**. Every finding in modes A–H must be changed in code that has no test
+covering the behaviour being preserved, in a codebase where the money rules live
+inside `Click` handlers (S44) and read global static state (S41). Task 4's own
+brief — a safe, incremental improvement — is the exact activity this makes
+unsafe. It also has a direct Phase-4 consequence: the DL types are `internal`
+(audit finding A5), so a test project needs `InternalsVisibleTo` or a visibility
+change before any of this is testable.
