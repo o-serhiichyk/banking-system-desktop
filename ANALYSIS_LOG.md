@@ -526,15 +526,56 @@ the four side-effecting `calculate*Money()` methods that mutate
 
 ### Pre-registered predictions
 
-| # | Probe (all start from a clean baseline) | Predicted result | What it falsifies / confirms |
-|---|---|---|---|
-| **1** | Log in as `Haider`/`15`. **Touch nothing.** Click **Log Out**. | `customers.txt` line 1 changes `…,2000,`**`9000`** → `…,2000,`**`11000`** (+2000 = Haider's deposit history, added once by the auto-refresh). No other line changes; no history file changes. | Balance-Details auto-corruption at login. If the row is unchanged, my `Load`-at-construction reading is **wrong** and the corruption needs a navigation to trigger. |
-| **2** | **One process, two logins.** (a) Log in, open **Balance Details**, record the six fields. (b) Navigate **Home** → back to **Balance Details**, record. (c) Click **Refresh** once, record. (d) **Log Out**. (e) Log in again as Haider, open **Balance Details**, record. (f) Log Out. | Displayed **Deposit** goes `2000` → `2000` → `2000` → **`4000`**; Available tracks it (`2000`→`4000`); Initial stays `2000`. Stored balance walks `9000` → 11000 (a) → 13000 (c) → written at (d) → 17000 (e) → **`17000`** on disk after (f). | Settles builder-vs-auditor by execution. Deposit stepping at (b) proves the auditor's **"every visit"**; stepping only at (e) proves **per login** (`Load` fires once per window instance; the static history lists are never cleared). Also exhibits the **third balance model** — the screen says `2000` while the stored balance is `13000`. |
-| **3** | Log in. **Withdraw Money** → amount `500` → Confirm → Log Out. | `withDrawHistory.txt` gains `Haider,500,<date>`. `customers.txt` = **`11500`** (9000 + 2000 auto + **500 added, not subtracted**). A correct system would store `8500`. | The withdrawal sign bug (`WithDrawMoneyCus.cs:29` adds where `DL/CustomerDL.cs:217` subtracts) — confirmed to the exact currency unit. |
-| **4** | Log in. **Transact Money** → account `454545` (user `T`), any purpose, amount `300` → Confirm. Then retry with amount `999999` (exceeds balance) and again to **own** account `123456`. Log Out. | All three transfers **succeed** with no error. `transactHistory.txt` gains `Haider,454545,<purpose>,300,<date>`; `sendMoneyPath.txt` gains `454545,123456,<purpose>,300,<date>` (two separate non-atomic writes). `customers.txt` Haider = **`11000`** — *unchanged by the transfers*; T's row `191437` also unchanged. | No funds check, no amount validation, no sender≠recipient guard, **no debit at transfer time**, and the two-file non-atomic write — in one run. |
-| **5** | Log in as **`Admin`/`1234`** (credentials appear nowhere in the data files). **Add Account**: Name `Test`, user `zz`, password `zz`, AccountType `Current`, City `Lahore`, phone `03001234567`, account `222222`, initial deposit `2000`. **Inspect `customers.txt` immediately, before any Log Out/edit/delete.** | Backdoor login succeeds → AdminWindow. Appended row has **10 fields** with the initial deposit twice: `Test,zz,zz,Current,Lahore,03001234567,222222,2000,2000,2000`, while every existing row has 9. `Users.txt` gains `zz,zz`. | The hardcoded backdoor (`DL/MUserDL.cs:28`) **and** the writer schema mismatch (`storeCustomer` `DL/AdminDL.cs:96` = 10 fields vs `storeAllCustomers` `:105` = 9). Must be read before a full rewrite silently repairs it to 9. |
-| **6** | *(if time)* As admin, create a customer with username **`admin`**, password `zzz`. Log out, log in as `admin`/`zzz`. | Lands in **AdminWindow**, not the customer window. | Privilege escalation by username string (`DL/MUserDL.cs:42-49` checks the name only, never a role or the password). |
-| **7** | *(if time)* Log in. **Deposit** `1000` → Confirm → close with the window **"X"**, not Log Out. | `depositHistory.txt` gains `Haider,1000,<date>` but `customers.txt` stays at **`9000`** — the deposit is recorded in history and lost from the balance. | Durability depends on which control the user closes with (`CusForm.cs:218-222` `Application.Exit()` with no flush vs `:135-142`). |
+**Risk IDs** in the first column refer to the numbered items in **§5 Technical
+risks** above; `A1`–`A4` refer to the *Missed findings* added by the Phase-1·rev
+Fable audit. Every probe is tied to a specific pre-existing claim — nothing here
+is exploratory, and the coverage is countable (see *Coverage* below the table).
+
+| # | Risks under test | Probe (all start from a clean baseline) | Predicted result | What it falsifies / confirms |
+|---|---|---|---|---|
+| **1** | **#12**, **A1**, #13 | Log in as `Haider`/`15`. **Touch nothing.** Click **Log Out**. | `customers.txt` line 1 changes `…,2000,`**`9000`** → `…,2000,`**`11000`** (+2000 = Haider's deposit history, added once by the auto-refresh). No other line changes; no history file changes. | Balance-Details auto-corruption at login. If the row is unchanged, my `Load`-at-construction reading is **wrong** and the corruption needs a navigation to trigger. |
+| **2** | **A1** (mechanism), **A2**, **#13**, #12 | **One process, two logins.** (a) Log in, open **Balance Details**, record the six fields. (b) Navigate **Home** → back to **Balance Details**, record. (c) Click **Refresh** once, record. (d) **Log Out**. (e) Log in again as Haider, open **Balance Details**, record. (f) Log Out. | Displayed **Deposit** goes `2000` → `2000` → `2000` → **`4000`**; Available tracks it (`2000`→`4000`); Initial stays `2000`. Stored balance walks `9000` → 11000 (a) → 13000 (c) → written at (d) → 17000 (e) → **`17000`** on disk after (f). | Settles builder-vs-auditor by execution. Deposit stepping at (b) proves the auditor's **"every visit"**; stepping only at (e) proves **per login** (`Load` fires once per window instance; the static history lists are never cleared). Also exhibits the **third balance model** — the screen says `2000` while the stored balance is `13000`. |
+| **3** *(amended)* | **#4**, **#5** | Log in. **Withdraw Money** → amount `500` → Confirm. **Then a second withdrawal of `999999`** → Confirm. → Log Out. | Both withdrawals **succeed with no warning**. `withDrawHistory.txt` gains `Haider,500,<date>` and `Haider,999999,<date>`. `customers.txt` = **`1002499`** (9000 + 2000 auto + 500 + 999999 — all **added, not subtracted**). A correct system would refuse the second and store `8500`. | The withdrawal sign bug (`WithDrawMoneyCus.cs:29` adds where `DL/CustomerDL.cs:217` subtracts) **and** the absent overdraft check (`WithDrawMoneyCus.cs:22-40` compares nothing to the balance), to the exact currency unit. |
+| **4** | **#5**, **#6**, A2 | Log in. **Transact Money** → account `454545` (user `T`), any purpose, amount `300` → Confirm. Then retry with amount `999999` (exceeds balance) and again to **own** account `123456`. Log Out. | All three transfers **succeed** with no error. `transactHistory.txt` gains `Haider,454545,<purpose>,300,<date>`; `sendMoneyPath.txt` gains `454545,123456,<purpose>,300,<date>` (two separate non-atomic writes). `customers.txt` Haider = **`11000`** — *unchanged by the transfers*; T's row `191437` also unchanged. | No funds check, no amount validation, no sender≠recipient guard, **no debit at transfer time**, and the two-file non-atomic write — in one run. |
+| **5a** | **#1**, **#3**, **#9**, #6 | Log in as **`Admin`/`1234`** (credentials appear nowhere in the data files). **Add Account**: Name `Test`, user `zz`, password `zz`, AccountType `Current`, City `Lahore`, phone `03001234567`, account `222222`, initial deposit `2000`. **Inspect `customers.txt` immediately, before any Log Out/edit/delete.** | Backdoor login succeeds → AdminWindow. Appended row has **10 fields** with the initial deposit twice: `Test,zz,zz,Current,Lahore,03001234567,222222,2000,2000,2000`, while every existing row has 9. `Users.txt` gains `zz,zz`. | The hardcoded backdoor (`DL/MUserDL.cs:28`) **and** the writer schema mismatch (`storeCustomer` `DL/AdminDL.cs:96` = 10 fields vs `storeAllCustomers` `:105` = 9). Must be read before a full rewrite silently repairs it to 9. |
+| **5b** *(added)* | **#8**, #9 | Still in the same admin session, **Add Account** a second time with a **comma in the free-text Name**: Name `Doe, John`, user `yy`, password `yy`, AccountType `Current`, City `Lahore`, phone `03007654321`, account `333333`, initial deposit `2000`. **Capture `customers.txt`.** Then Log Out (admin logout does *not* rewrite the file) and log in as `yy`/`yy`. | The comma is written **raw, unquoted, unescaped**: `Doe, John,yy,yy,Current,Lahore,03007654321,333333,2000,2000,2000` — 11 comma-separated tokens. On the next read every field past the name **shifts by one**, so the record re-parses as accountType `yy`, city `Current`, phone `Lahore`, **account number `3007654321`** (their phone) and **initial deposit `333333`** (their account number). Login as `yy`/`yy` then **succeeds** (`Users.txt` is uncorrupted) but `setCurrent` cannot match the mangled username `" John"` (`DL/AdminDL.cs:27-36`), leaving `AdminDL.Current` as a blank `new Admin()` (`:14`, `BL/Admin.cs:43`) → **the customer window opens on an empty, zero-balance account.** | Risk #8 executed on data a *user can actually type*, not inferred from the date-field workaround. One comma in a name silently reassigns account number and deposit, then locks the customer out of their own record while still letting them log in. Also shows the corruption is **progressive**: the next full rewrite re-emits the already-shifted values. |
+| **6** | **#2** | *(if time)* As admin, create a customer with username **`admin`**, password `zzz`. Log out, log in as `admin`/`zzz`. | Lands in **AdminWindow**, not the customer window. | Privilege escalation by username string (`DL/MUserDL.cs:42-49` checks the name only, never a role or the password). |
+| **7** | **#7** | *(if time)* Log in. **Deposit** `1000` → Confirm → close with the window **"X"**, not Log Out. | `depositHistory.txt` gains `Haider,1000,<date>` but `customers.txt` stays at **`9000`** — the deposit is recorded in history and lost from the balance. | Durability depends on which control the user closes with (`CusForm.cs:218-222` `Application.Exit()` with no flush vs `:135-142`). |
+
+### Amendments to this pre-registration
+
+Made **after** the Part-A commit and **before** running the amended probes, so
+the amendment itself is timestamped ahead of its own evidence. Both close
+coverage gaps found when the risk IDs above were mapped:
+
+- **Probe 3 amended** — a single `500` withdrawal proves the *sign bug* (#4) but
+  not the *missing overdraft check* (#5); worse, the sign bug **masks** #5, since
+  withdrawing increases the balance. A second withdrawal of `999999` against a
+  9000 balance tests #5 directly and keeps the arithmetic exact.
+- **Probe 5b added** — nothing in the original set exercised **#8** (the
+  unescaped hand-rolled CSV parser). The free-text `Name` field is the one
+  user-controlled value that reaches the writer unescaped, so a comma in a name
+  demonstrates #8 on realistic input instead of on the internal date format.
+
+### Coverage
+
+Executed by these probes: risks **#1, #2, #3, #4, #5, #6\*, #7, #8, #9, #12,
+#13** and Fable additions **A1, A2** — 11 of the 16 detected risks, plus 2 of 4
+audit additions.
+
+Deliberately **not** validated by execution, and reported as static findings
+only: **#10** (culture-sensitive `double.Parse` — needs a locale change),
+**#11** (`double` money precision), **#14** (remove-while-iterating — needs
+constructed duplicate records), **#15** (dead code), **#16** (absence of
+logging — nothing to run), **A3** (`EditCustomer` uniqueness) and **A4** (orphan
+rows in shipped data — readable directly).
+
+> \* **#6 is only partially executable and must not be overclaimed.** The probes
+> demonstrate that create and transfer each perform **two separate sequential
+> writes** with no transaction — i.e. that the failure *window* exists. They do
+> **not** demonstrate data loss from a crash between the writes; that needs
+> fault injection, which is out of scope here. The report states the window, not
+> a forced failure.
 
 **Process hygiene (or the arithmetic won't reproduce):** every probe except #2
 runs in a **fresh process from a reset baseline** — close the app, restore the
@@ -544,3 +585,42 @@ one process; probe #2 exploits exactly that, the others must avoid it.
 
 Probes 1–5 are the priority set; 6–7 are cheap add-ons. Results, hit rate, and
 the control probe are recorded in Part B below.
+
+---
+
+## Session 1 · Phase 2 — Validation · **PART B: results**
+
+Each probe: run from a reset baseline, then
+`git diff -- "BMS WinForm/bin/Debug/*.txt"`. Diffs are quoted verbatim.
+
+### Probe 1 — zero-interaction balance corruption · **CONFIRMED, exact**
+
+```diff
+--- a/BMS WinForm/bin/Debug/customers.txt
++++ b/BMS WinForm/bin/Debug/customers.txt
+@@ -1 +1 @@
+-Ali,Haider,15,Current,Multan,2131,123456,2000,9000
++Ali,Haider,15,Current,Multan,2131,123456,2000,11000
+```
+
+Logged in as `Haider`, **clicked nothing**, clicked Log Out. The stored balance
+moved **9000 → 11000** — the predicted +2000, matching Haider's single
+`depositHistory.txt` row to the currency unit. One line changed; no other
+customer row and no history file was touched, as predicted.
+
+**What this establishes.** The `BalanceDetailsCus_Load` corruption needs **no
+user interaction at all**: the control is a visible designer-instantiated child
+of `CustomerWindowPAge` (`CusForm.Designer.cs:434-440`), so WinForms creates it
+and fires its `Load` when the window is shown — *before* `CustomerWindowPAge_Load`
+hides it (`CusForm.cs:144-153`). `Load` reads the four history files and calls
+`btnRefresh_Click` (`BalanceDetailsCus.cs:50`), whose side-effecting
+`calculateDepositMoney()` adds the whole deposit history to
+`AdminDL.Current.TotalMoney` (`DL/CustomerDL.cs:198`) — a reference into
+`customersList` (`DL/AdminDL.cs:33`) — which Log Out then flushes to disk
+(`CusForm.cs:138`).
+
+The business statement: **a customer who logs in and immediately logs out has
+their balance silently rewritten**, by the sum of their own deposit history,
+every session. It compounds — nothing is idempotent. This also explains the
+shipped data: `T`'s balance of `191437` against a `12111` initial deposit is
+consistent with repeated runs of exactly this defect, not with real activity.
