@@ -31,10 +31,10 @@ Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**
 | # | Capability | Kind | Complexity | Addresses | Coverage |
 |---|---|---|---|---|---|
 | 1 | Pre-transaction validation guard | [INCOMPLETE] | Medium | S25 | **Partial** — gated on rank 2 |
-| 2 | Account status and non-destructive closure | [NEW] | Complex | S17, A4 | **Prevents recurrence** |
-| 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23 | **Full** (S47 unreachable) |
+| 2 | Account status and non-destructive closure | [NEW] | Complex | S17, A4, **S50** | **Prevents recurrence** |
+| 3 | Credential protection at rest and on screen | [NEW] | Medium | S22, S23, **S50** | **Full** (S47 unreachable) |
 | 4 | Explicit role attribute | [NEW] | Medium | **rank 1** | **Partial** — one limb of two |
-| 5 | **Append-only audit trail** ✅ *chosen for Task 4* | [NEW] | Medium | **rank 3** · +10 findings | **Partial** mitigation (1 limb of 2) · **broad detection** |
+| 5 | **Append-only audit trail** ✅ **built — see `specs/AUDIT_TRAIL.md`** | [NEW] | Medium | **rank 3** · +10 findings | **Partial** mitigation (1 limb of 2) · **broad detection** |
 | 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 | **Partial** on all three |
 | 7 | Transaction receipt and account statement | [NEW] | Medium | rank 2 | **Detects only** |
 | 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** rank 4 |
@@ -62,16 +62,31 @@ checks against, and rank 2 means three balances disagree. *Residual: an
 "insufficient funds" check built on a corrupted balance is not a funds check.
 This capability is gated on rank 2 being fixed first.*
 
-**2 · Account closure → S17, A4.** Soft-close plus a no-reissue rule stops new
-orphans and stops a reissued number inheriting a stranger's transfers.
-*Residual: the orphan rows already in the shipped `withDrawHistory.txt` (`Ali`,
-`Karim`, `Ghulam`) are not repaired by it. Prevention, not remediation.*
+**2 · Account closure → S17, A4, S50.** Soft-close plus a no-reissue rule stops new
+orphans and stops a reissued number inheriting a stranger's transfers. **It also
+closes S50's most serious limb**: the deleted customer whose credential survives in
+`Users.txt` and still authenticates. A soft close is a single status flag on one
+record, so there is no second store to fall out of step with the first — the whole
+class of defect disappears rather than being patched. *Residual: the orphan rows
+already in the shipped `withDrawHistory.txt` (`Ali`, `Karim`, `Ghulam`) are not
+repaired by it. Prevention, not remediation.*
 
-**3 · Credential protection → S22, S23.** Both limbs of S22 (at rest, on screen)
-and S23 are genuinely closed. *Residual: **S47 is unreachable by any capability**
-— the credentials are already in git history from the original author's first
-commit, and hashing forward cannot remove them. Only a history rewrite would,
-which is unavailable without destroying the fork's attribution.*
+**3 · Credential protection → S22, S23, S50.** Both limbs of S22 (at rest, on
+screen) and S23 are genuinely closed. **S50 raises this capability's complexity and
+was not accounted for when it was scoped.** S50 shows the two-store design is
+already broken in practice — `EditCustomer.cs:73` looks up credentials by
+username+password *after* those values have been overwritten in the shared object,
+so an edit never reaches `Users.txt` and a later delete leaves a working login. This
+capability makes the password a **hash**, and the identity lookups at
+`DL/AdminDL.cs:27-36` and `DL/MUserDL.cs:109-120` key on username+password — so it
+has to touch the very code path S50 lives in. *Consequence: the implementation
+cannot avoid deciding whether to fix S50 at the same time, and hashing on top of the
+existing lookup would preserve the desync while making it harder to spot. Complexity
+stays Medium, but "plus a one-time file migration" now reads as optimistic.*
+*Residual: **S47 is unreachable by any capability** — the credentials are already in
+git history from the original author's first commit, and hashing forward cannot
+remove them. Only a history rewrite would, which is unavailable without destroying
+the fork's attribution.*
 
 **4 · Role attribute → rank 1.** Rank 1 has two limbs in two different methods.
 The role attribute replaces `isAdmin`'s username check (`DL/MUserDL.cs:42-49`) —
@@ -79,7 +94,7 @@ that limb closes. **The hardcoded backdoor is in `checkuser`
 (`DL/MUserDL.cs:26-31`) and is untouched by it.** `checkuser` returns the
 caller's own object (`:30`), which carries no persisted role, so after this
 change the backdoor no longer grants admin — but it still *authenticates*, and
-`Form1.cs:74` then calls `AdminDL.setCurrent`, which fails open (S24) and leaves
+`Form1.cs:82` then calls `AdminDL.setCurrent`, which fails open (S24) and leaves
 the previous customer bound. *Residual: rank 1 closes only if the
 implementation also deletes the literal at `:28` and makes `setCurrent` fail
 closed. Scoped as "add a role field", it converts a privilege escalation into a
@@ -91,10 +106,30 @@ timestamps: not closed.** The trail carries its own system-generated times, but
 `depositHistory.txt`, `withDrawHistory.txt`, `transactHistory.txt` and
 `sendMoneyPath.txt` still take their dates from `DateTimePicker.Text`
 (`DepositMoneyCus.cs:59`, `WithDrawMoneyCus.cs:28`, `TransactMoneyCus.cs:58`).
-*Residual: the customer-facing ledger stays backdatable; you gain a trustworthy
-parallel record, not a trustworthy primary one. The limb that closes it is the
-**rejected** candidate "system-generated transaction timestamps", pruned as
+*Residual: the customer-facing ledger stays backdatable; you gain a **more**
+trustworthy parallel record, not a trustworthy primary one. The limb that closes it
+is the **rejected** candidate "system-generated transaction timestamps", pruned as
 `[FIX]` — see Rejected candidates below.*
+
+**⚠ Now built, so this entry is a forecast that can be checked against a result.**
+`specs/AUDIT_TRAIL.md` is authoritative for what exists; where it is narrower than
+the claims here, its §4 states the delta rather than letting this file's coverage be
+read into the build. Three corrections that belong here rather than only there:
+
+- **"Trustworthy" was too strong, and the spec's §5.3 now says so.** What the
+  trail's timestamps actually improve on is narrow — they are not
+  operator-supplied, so a transaction cannot be backdated from a picker. They carry
+  no UTC offset, resolve to one second, and come from a clock any operator who can
+  edit the data files can also change. *Harder to falsify than the ledger beside
+  it; not authoritative.*
+- **"+10 findings" is detection reach, and the build reaches fewer.** The `calculate*`
+  recompute (S3, S4, S5) changes a balance with **no file write**, so no
+  instrumented site sees it; rank 2 is detected at the logout persist only. Spec §4.
+- **It found a finding nobody had.** Validating it produced **S50** and upgraded
+  **S14** to a startup-denial defect (`FINDINGS.md` probe 7) — value this entry did
+  not predict, and the strongest evidence for the "cross-cutting, not
+  single-finding" argument below. Worth noting *why*: the value came from
+  **executing** the seven capture sites, not from the trail's own rows.
 
 **This is the entry where the mitigation figure misleads.** Partial on rank 3 is
 the whole of its *mitigation* story and none of its value: with before/after
@@ -135,7 +170,7 @@ closing an account currently deletes the person.
 
 **Missing.** No operation validates anything about the money. Withdraw parses an
 amount and applies it with no balance reference anywhere in the handler
-(`WithDrawMoneyCus.cs:22-40`). Transfer validates only that the destination
+(`WithDrawMoneyCus.cs:22-53`). Transfer validates only that the destination
 account exists (`TransactMoneyCus.cs:41-53`) — no funds check, no amount > 0, no
 sender ≠ recipient. Deposit accepts any parseable double
 (`DepositMoneyCus.cs:57`). Rudimentary validation *does* exist elsewhere (an
@@ -210,7 +245,7 @@ key*: `setCurrent` (`DL/AdminDL.cs:27-36`) and `MUserDL.editCustomerData`
 (`DL/MUserDL.cs:109-120`) identify records by username+password, so those
 lookups change too, plus a one-time file migration.
 
-**Blast radius.** `DL/MUserDL.cs`, `DL/AdminDL.cs`, `Form1.cs:60-87`,
+**Blast radius.** `DL/MUserDL.cs`, `DL/AdminDL.cs`, `Form1.cs:60-92`,
 `AddUser.cs`, `EditCustomer.cs`, `ViewCustomer.cs` + designer,
 `CustomerHome.cs`, `SearchResult.cs`, existing data files.
 
@@ -220,7 +255,7 @@ lookups change too, plus a one-time file migration.
 neither password nor role: `isAdmin` returns true for any user called `Admin` or
 `admin` (`DL/MUserDL.cs:42-49`), and a hardcoded credential pair is accepted
 before the user store is consulted (`DL/MUserDL.cs:28`). Neither `MUser`
-(`BL/MUser.cs:11-13`) nor `Admin` (`BL/Admin.cs:11-19`) carries a role.
+(`BL/MUser.cs:12-13`) nor `Admin` (`BL/Admin.cs:11-19`) carries a role.
 
 **Business value.** Probe 6 created an ordinary customer named `admin` and landed
 in the admin console with full operator rights — all PII, all plaintext
@@ -229,7 +264,7 @@ the built-in pair cannot be rotated without a code change while the prebuilt
 `.exe` ships in the repository.
 
 **Complexity — Medium.** The routing decision lives in one place
-(`Form1.cs:68`); the work is a persisted role plus file migration, plus deciding
+(`Form1.cs:73`); the work is a persisted role plus file migration, plus deciding
 what the first operator account is once the hardcoded pair is gone.
 
 **Blast radius.** `BL/MUser.cs`, `BL/Admin.cs`, `DL/MUserDL.cs`,
@@ -241,10 +276,10 @@ criterion (iv).
 ## 5 · Append-only audit trail for money and privileged operations — [NEW]
 
 **Missing.** No logging of any kind exists. Money operations report outcomes only
-through a modal (`DepositMoneyCus.cs:64,69`, `WithDrawMoneyCus.cs:33,38`,
-`TransactMoneyCus.cs:64,71`). Privileged actions leave nothing behind: a balance
-edit mutates the record and rewrites the file (`EditCustomer.cs:55-57`,
-`ViewCustomer.cs:115`) and a delete rewrites both files
+through a modal (`DepositMoneyCus.cs:74,79`, `WithDrawMoneyCus.cs:46,51`,
+`TransactMoneyCus.cs:81,88`). Privileged actions leave nothing behind: a balance
+edit mutates the record and rewrites the file (`EditCustomer.cs:69-74`,
+`ViewCustomer.cs:125`) and a delete rewrites both files
 (`ViewCustomer.cs:105-108`) — recording no operator, no previous value, no time.
 `AdminWindow` never receives the identity of the operator who opened it
 (`AdminWindow.cs:21-26`).
@@ -280,7 +315,7 @@ the missing record. The second of two candidates satisfying criterion (iv).
 (`DL/AdminDL.cs:100-109`, `DL/MUserDL.cs:88-97`), so a mid-write failure leaves a
 truncated file and no copy of what was there. Multi-file operations are
 sequences of independent writes with no coordination: create (`AddUser.cs:91,93`),
-transfer (`TransactMoneyCus.cs:62-63`), delete (`ViewCustomer.cs:107-108`). No
+transfer (`TransactMoneyCus.cs:75-78`), delete (`ViewCustomer.cs:107-108`). No
 file is opened with a share mode or lock, and no backup is taken anywhere.
 
 **Business value.** `customers.txt` is the only record that a customer exists,
@@ -299,7 +334,7 @@ decision.
 ## 7 · Transaction receipt and account statement — [NEW]
 
 **Missing.** A completed transaction produces only a modal
-(`DepositMoneyCus.cs:64`, `WithDrawMoneyCus.cs:33`, `TransactMoneyCus.cs:64`) —
+(`DepositMoneyCus.cs:74`, `WithDrawMoneyCus.cs:46`, `TransactMoneyCus.cs:81`) —
 no reference number, no resulting balance, nothing the customer keeps.
 `Customer` has no identifier field (`BL/Customer.cs:11-20`), so a transaction
 cannot be referred to at all. History screens bind raw lists with no totals, no
@@ -465,6 +500,21 @@ Not described here. This file states *which capability and why*; the contract fo
 the Task-4 build — instrumented call sites, record format, behaviour guarantees,
 limits, and how the basic version's coverage is narrower than the capability's —
 is [`specs/AUDIT_TRAIL.md`](specs/AUDIT_TRAIL.md).
+
+**Status: built.** Seven instrumented sites, three new `internal` types in `DL/`, 43
+NUnit tests, and all seven sites validated by manual execution. The prediction this
+section rests on — *"the only candidate that changes no behaviour"* — held: the
+change is additive, no existing statement was altered or removed, and the writer
+swallows every exception precisely so that instrumentation cannot alter a call
+site's behaviour.
+
+**One prediction did not hold.** "Complexity — Medium … an append-only writer
+mirrors the existing `store*` methods" understated two things the build had to
+absorb: `double.ToString` is not round-trip exact on .NET Framework (so the writer
+needed a shortest-exact number formatter, not a `ToString` call), and the seven
+`Click` handlers had no seam, so **§7.3 records that deleting any one `Append` call
+leaves all 43 tests green**. Medium was still the right call; "mirrors the existing
+`store*` methods" was not.
 
 ## Why not the alternatives
 

@@ -46,13 +46,13 @@ occurring, which is why the concrete failures rank above them.
 
 ### 1 · Backdoor plus authorization by username string
 
-**Location** — `DL/MUserDL.cs:26-31`, `DL/MUserDL.cs:42-49`, `Form1.cs:66-73`
+**Location** — `DL/MUserDL.cs:26-31`, `DL/MUserDL.cs:42-49`, `Form1.cs:66-78`
 **Mode** — C · **[E]**, probes 5a and 6
 
 `isAdmin` returns true for any user whose username is `Admin` or `admin`,
 consulting neither the password nor any role, and a hardcoded `Admin`/`1234`
 pair is accepted before the user store is read at all. Neither `MUser`
-(`BL/MUser.cs:11-13`) nor `Admin` (`BL/Admin.cs:11-19`) carries a role field,
+(`BL/MUser.cs:12-13`) nor `Admin` (`BL/Admin.cs:11-19`) carries a role field,
 and `AddUser` does not reserve the name.
 
 **Production impact.** Probe 6 registered an ordinary customer named `admin`
@@ -72,12 +72,12 @@ admin account into `Users.txt` with a hashed password and delete the literal.
 
 ### 2 · Three disagreeing balance models, corrupted on the normal path
 
-**Location** — `DL/CustomerDL.cs:198,217,234,248`, `WithDrawMoneyCus.cs:29`,
-`TransactMoneyCus.cs:36-73`, `DL/CustomerDL.cs:253-259`
+**Location** — `DL/CustomerDL.cs:198,217,234,248`, `WithDrawMoneyCus.cs:30`,
+`TransactMoneyCus.cs:36-90`, `DL/CustomerDL.cs:253-259`
 **Mode** — A · **[E]**, probes 1–4
 
 Three balance definitions run simultaneously and all three are wrong. The
-incremental in-memory one *adds* on withdrawal (`WithDrawMoneyCus.cs:29`). The
+incremental in-memory one *adds* on withdrawal (`WithDrawMoneyCus.cs:30`). The
 `calculate*Money` recompute mutates `AdminDL.Current.TotalMoney` while returning
 a total, so it is not idempotent and re-applies the entire history on every
 Balance Details load and Refresh click. The displayed one
@@ -100,8 +100,8 @@ transfers at commit.
 ### 3 · Falsifiable timestamps and unlogged privileged edits
 
 **Location** — `DepositMoneyCus.cs:59`, `WithDrawMoneyCus.cs:28`,
-`TransactMoneyCus.cs:58`, `EditCustomer.cs:53-57`,
-`ViewCustomer.cs:105-108,115`, `AdminWindow.cs:21-26`
+`TransactMoneyCus.cs:58`, `EditCustomer.cs:53-74`,
+`ViewCustomer.cs:105-108,125`, `AdminWindow.cs:21-26`
 **Mode** — G · **[S]**
 
 Every money record takes its date from a form control's text, never the clock —
@@ -287,12 +287,12 @@ session flagged it as needing execution to confirm.
 
 | ID | Finding | Location | | |
 |---|---|---|---|---|
-| S1 | Withdrawal credits instead of debiting | `WithDrawMoneyCus.cs:29` | live | [E] |
+| S1 | Withdrawal credits instead of debiting | `WithDrawMoneyCus.cs:30` | live | [E] |
 | S2 | Available balance omits the initial deposit | `DL/CustomerDL.cs:253-259` | live | [E] |
 | S3 | `calculateReceivedMoney` has no owner guard, unlike its three siblings | `DL/CustomerDL.cs:241-252` | live | [S] |
 | S4 | Balance screen re-reads history without clearing — **per login, not per visit** (probe 2 disproved the per-visit claim) | `BalanceDetailsCus.cs:40-43` | live | [E] |
 | S5 | `calculate*` mutate persisted state as a side effect; not idempotent | `DL/CustomerDL.cs:198,217,234,248` | live | [E] |
-| S6 | Transfer never debits sender or credits recipient | `TransactMoneyCus.cs:36-73` | live | [E] |
+| S6 | Transfer never debits sender or credits recipient | `TransactMoneyCus.cs:36-90` | live | [E] |
 | S7 | `editCustomerData` silently drops the City field | `DL/AdminDL.cs:120-137` | live | [S] |
 | S8 | Initial-deposit minimum off by one (`<1999` vs a "2000" message) | `AddUser.cs:83-86` | live | [S] |
 | S9 | Navigation handler misses one `Hide()`; stale panel remains visible | `CusForm.cs:96-107` | live | [X] |
@@ -304,13 +304,13 @@ session flagged it as needing execution to confirm.
 |---|---|---|---|---|
 | S11 | `storeCustomer` writes 10 fields, `storeAllCustomers` 9; reader takes field 9 | `DL/AdminDL.cs:96,105` | latent | [E] |
 | S11 · compounding | The two defects stack: a create with a comma in the name wrote a **12**-field row, i.e. S14's shift *on top of* S11's extra field. Field-index recovery is then guesswork | `DL/AdminDL.cs:96` | live | [E] trail run |
-| S12 | Transfer writes two files non-atomically | `TransactMoneyCus.cs:62-63` | latent | [E] window only |
-| S13 | Balances persisted only on the Log Out button; window-close loses them | `CusForm.cs:135-142,218-222` | live | [S] |
+| S12 | Transfer writes two files non-atomically | `TransactMoneyCus.cs:75-78` | latent | [E] window only |
+| S13 | Balances persisted only on the Log Out button; window-close loses them | `CusForm.cs:135-156,232-236` | live | [S] |
 | S14 | CSV fields never escaped — one comma shifts every following field, and the shifted row then **makes the app unstartable** (A/B controlled launch; see the ranking note above) | `DL/AdminDL.cs:96,105` +7 sites | live | [E] 5/5 + A/B |
 | S15 | Feedback is a `RichTextBox` written as one CSV line; newlines split records | `GiveFeedback.cs:26-27`, `DL/CustomerDL.cs:58` | live | [S] |
 | S16 | Dates are user-chosen localized display strings containing a comma | `DepositMoneyCus.cs:59` +6 sites | live | [S] |
 | S17 | Delete leaves history and frees the account number for reissue | `ViewCustomer.cs:105-108` | latent | [S] |
-| S18 | Edit skips the uniqueness checks Add enforces | `EditCustomer.cs:44-59` | latent | [S] |
+| S18 | Edit skips the uniqueness checks Add enforces | `EditCustomer.cs:44-76` | latent | [S] |
 | S19a | Money is not represented exactly | `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19` | live | [S] |
 | S19b | Account numbers are `double`; identity decided by `==` | `AddUser.cs:70-77`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139` | latent | [S] |
 
@@ -325,8 +325,8 @@ session flagged it as needing execution to confirm.
 | S24 | `setCurrent` fails open — no match leaves the previous customer bound | `DL/AdminDL.cs:27-36` | latent | [E] path |
 | S25 | No funds, amount or self-transfer validation | `TransactMoneyCus.cs:41-57`, `WithDrawMoneyCus.cs:26` | live | [E] |
 | S47 | Credentials are in git history, not merely plaintext at rest — `Users.txt` entered at the original author's first commit `5518017` carrying `Haider,15`, `T,1`, `Saleem,123`. Hashing forward cannot remove them | `.gitignore:8-10` | live | [S] |
-| S49 | Authentication is brute-forceable today: no attempt counter, no lockout, shipped passwords of 1–3 characters | `Form1.cs:60-87` | live | [S] |
-| **S50** | **Editing a customer never updates the credential store, and a later delete then leaves a working login behind.** `EditCustomer.cs:56` passes `previous.UserName`/`previous.Password` *after* `AdminDL.editCustomerData` has mutated that very object (the grid's `DataBoundItem` **is** the list element), so `MUserDL.editCustomerData` looks up values that no longer exist and matches nothing. `deleteIdFromList` then fails the same way, and `storeAllIds` writes the stale row back. Since `checkuser` consults `UsersList` alone, **the deleted customer still authenticates** | `EditCustomer.cs:55-57`, `ViewCustomer.cs:106,108`, `DL/MUserDL.cs:26-31,98-120` | live | [E] trail run |
+| S49 | Authentication is brute-forceable today: no attempt counter, no lockout, shipped passwords of 1–3 characters | `Form1.cs:60-92` | live | [S] |
+| **S50** | **Editing a customer never updates the credential store, and a later delete then leaves a working login behind.** `EditCustomer.cs:73` passes `previous.UserName`/`previous.Password` *after* `AdminDL.editCustomerData` has mutated that very object (the grid's `DataBoundItem` **is** the list element), so `MUserDL.editCustomerData` looks up values that no longer exist and matches nothing. `deleteIdFromList` then fails the same way, and `storeAllIds` writes the stale row back. Since `checkuser` consults `UsersList` alone, **the deleted customer still authenticates** | `EditCustomer.cs:69-74`, `ViewCustomer.cs:106,108`, `DL/MUserDL.cs:26-31,98-120` | live | [E] trail run |
 
 *S47 scope: sample data in an already-public upstream repository, so no live
 customer secret is newly exposed. The finding is that committing the working
@@ -369,7 +369,7 @@ datastore makes credential leakage permanent and unfixable in place.*
 | S41 | All logic static, with static mutable session state | `DL/AdminDL.cs:13-17` +2 | latent | [E] |
 | S42 | Seven filenames as bare relative literals in 16 places; two divergent data sets exist in the repo | 16 sites | live | [S] |
 | S43 | `Customer` overloads distinguished only by parameter order | `BL/Customer.cs:33-62` | latent | [S] |
-| S44 | Screens call persistence directly; no service layer, anemic `BL/` | `TransactMoneyCus.cs:41-63` +4 | latent | [S] |
+| S44 | Screens call persistence directly; no service layer, anemic `BL/` | `TransactMoneyCus.cs:41-78` +4 | latent | [S] |
 | S45 | Unguarded cast of the grid's bound item before the column check | `ViewCustomer.cs:102-103` | latent | [X] |
 
 ### operations / testability

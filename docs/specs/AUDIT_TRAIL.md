@@ -20,12 +20,12 @@ has already been applied by the time the entry is written.
 **Six of the seven are also after persistence; site 5 is not.** This claim read
 "applied and persisted" at every site in the first draft, and that was wrong.
 `EditCustomer.cs` only mutates the in-memory list; the rewrite of `customers.txt`
-happens after the dialog returns, at `ViewCustomer.cs:115`, which §5.1 lists as
+happens after the dialog returns, at `ViewCustomer.cs:125`, which §5.1 lists as
 uninstrumented. So a `CustomerEdit` row names `customers.txt` in `targetFile`
 **before** anything has been written to it, and a failed rewrite leaves an entry
 asserting an edit that never reached the file it names.
 
-Moving the entry to after that rewrite is not available: `ViewCustomer.cs:115`
+Moving the entry to after that rewrite is not available: `ViewCustomer.cs:125`
 runs whether the dialog was confirmed **or cancelled**, so capturing there would
 log edits that did not happen — a worse failure than the one above. Threading a
 success signal out of the dialog is restructuring, which this capability was
@@ -33,11 +33,11 @@ chosen to avoid. Recorded as a limit rather than designed around.
 
 | # | Operation | Site | Entries |
 |---|---|---|---|
-| 1 | Deposit | `DepositMoneyCus.cs:62` — after `storeDepositHistory` | 1 |
-| 2 | Withdraw | `WithDrawMoneyCus.cs:31` — after `storeWithDrawHistory` | 1 |
-| 3 | Transfer | `TransactMoneyCus.cs:62` and `:63` — after each write | **2** |
+| 1 | Deposit | `DepositMoneyCus.cs:63` — after `storeDepositHistory` | 1 |
+| 2 | Withdraw | `WithDrawMoneyCus.cs:32` — after `storeWithDrawHistory` | 1 |
+| 3 | Transfer | `TransactMoneyCus.cs:75` and `:78` — after each write | **2** |
 | 4 | Customer create | `AddUser.cs:91-93` — after both stores | 1 |
-| 5 | Customer record edit | `EditCustomer.cs:55` — after `editCustomerData` | 1 |
+| 5 | Customer record edit | `EditCustomer.cs:69` — after `editCustomerData` | 1 |
 | 6 | Customer delete | `ViewCustomer.cs:105-108` — after both stores | 1 |
 | 7 | Logout balance write | `CusForm.cs:138` — after `storeAllCustomers` | 1 |
 
@@ -48,7 +48,7 @@ site otherwise. It records `AdminDL.Current` only — one row, not one per custo
 (`DL/CustomerDL.cs:198,217,234,248`), so every other row `storeAllCustomers`
 writes is byte-identical to what was loaded at login.
 
-**Why the transfer writes two.** `TransactMoneyCus.cs:62-63` is two independent,
+**Why the transfer writes two.** `TransactMoneyCus.cs:75-78` is two independent,
 uncoordinated file writes (S12). One entry per write means a single post-hoc entry
 cannot assert "transfer completed" in exactly the case where it did not. The pair
 shares an `operationId`.
@@ -81,9 +81,27 @@ a spreadsheet is the investigation path an operator actually has.
 contains a comma, a double quote, CR or LF; internal quotes are doubled; **values
 are never altered**. The delimiter matches the codebase; the escaping is the part
 the codebase lacks (S14 — `DL/AdminDL.cs:96,105` concatenate with no escaping at
-all, proven by execution 5/5). A lossy sanitizer was rejected: the trail must be
-able to record the exact string that caused a corruption, which is the one case
-where fidelity matters most.
+all, proven by execution 5/5). A lossy sanitizer was rejected: **any value the
+trail does carry, it carries byte-exact**, so a string that corrupted a data file
+survives in the trail unaltered — which is the one case where fidelity matters
+most.
+
+⚠ **That guarantee is about fidelity, not coverage, and the distinction was
+originally blurred here.** The first draft claimed the trail "must be able to
+record the exact string that caused a corruption", which overstates what the
+twelve columns reach. The §7 validation run demonstrated the gap: a customer
+`Name` containing a comma corrupted `customers.txt` and made the application
+unstartable (S14, now `FINDINGS.md` probe 7), and the `CustomerCreate` row for
+that very operation **does not contain the offending value** — the event records
+`subjectUserName` and `subjectAccount`, not `Name`. `Name` reaches the trail only
+through `details`, and only on a `CustomerEdit`.
+
+So the accurate claim is narrower: *values in the recorded columns are exact*.
+Whether the corrupting field is **in** a column is a separate question, answered
+per event by the table above. Adding `Name` to `CustomerCreate` would close this
+particular case and is **not built** — it is a change to the record contract, not
+an implementation detail, and it would want the same treatment on delete for
+symmetry.
 
 **Timestamps** — `DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss",
 CultureInfo.InvariantCulture)`. Invariant because several cultures emit a comma
@@ -167,22 +185,27 @@ habit — it is load-bearing, because instrumentation that can throw *would* cha
 behaviour at every site:
 
 - The three money handlers wrap their whole body in `try { … } catch { MessageBox.Show(…) }`
-  (`DepositMoneyCus.cs:55-70`, `WithDrawMoneyCus.cs:24-39`, `TransactMoneyCus.cs:38-72`).
+  (`DepositMoneyCus.cs:55-80`, `WithDrawMoneyCus.cs:24-52`, `TransactMoneyCus.cs:38-89`).
   A throwing append would show a failure dialog for a deposit that *succeeded*,
   and skip `clearFormData()` — leaving the amount in the form. The likely human
   response is to press Confirm again. **A failed audit write would turn one
   deposit into two.**
-- `CusForm.cs:135-142` and `ViewCustomer.cs:100-119` have no `try` at all. A
+- `CusForm.cs:135-156` and `ViewCustomer.cs:100-129` have no `try` at all. A
   throw there is unhandled.
 
 The failure is not hypothetical: S28 records 16 streams opened without `using`
 and closed only on success, which is exactly the condition that leaves a handle
 open. The cost of swallowing is a silently dropped entry, which is §5.1.
 
-**Operator identity.** `AuditSession.Operator` is a static string set once,
-immediately after the successful authentication check at `Form1.cs:66`, before
-the `isAdmin` branch — so both the admin and the customer path populate it
-uniformly.
+**Operator identity.** `AuditSession.Operator` is a static string set once, at
+`Form1.cs:72` — immediately after the successful authentication check
+(`Form1.cs:66`) and before the `isAdmin` branch (`Form1.cs:73`), so both the admin
+and the customer path populate it uniformly.
+
+*Confirmed by execution.* In the §7 run the `CustomerEdit` row recorded
+`operator` = `Admin` while `AdminDL.Current` still held `Haider`, the customer from
+the previous session. That is this decision's whole purpose, observed in exactly
+the case it was written for.
 
 `AuditSession` is an `internal static class` in `DL/`, beside the writer, holding
 the operator string and nothing else. Not in `BL/` — it is session state, not
@@ -192,9 +215,9 @@ trail exists to observe.
 
 **`AdminDL.Current` must never be used as the actor.** It is
 `new Admin()` at `DL/AdminDL.cs:14`, so it is never null and gives no "unset"
-signal; the admin branch at `Form1.cs:68-72` never calls `setCurrent`; and
+signal; the admin branch at `Form1.cs:73-77` never calls `setCurrent`; and
 `current` is not cleared on logout, which only constructs a new `LogIn` in the
-same process (`CusForm.cs:140`). During an admin session it therefore holds **the
+same process (`CusForm.cs:154`). During an admin session it therefore holds **the
 previous customer** — logging it would name an innocent customer as the actor of
 an admin balance edit. False attribution in a record whose only job is
 attribution is worse than a blank field.
@@ -215,7 +238,7 @@ The basic version does **not** cover:
   S5. These change a balance with no file write, so no instrumented site sees
   them.
 - **The credential-store writes** — `MUserDL.storeAllIds` / `storeUsersID`
-  (`EditCustomer.cs:57`, `AddUser.cs:93`), written *during* two instrumented
+  (`EditCustomer.cs:74`, `AddUser.cs:93`), written *during* two instrumented
   operations but never recorded as events of their own.
 - **`CustomerDL.storeFeedBack`** (`GiveFeedback.cs:26-27`).
 - **Any chokepoint guarantee** — see §5.1.
@@ -254,8 +277,8 @@ occur** — only that no instrumented path recorded it. Specifically:
   another customer's balance mid-session would be missed.
 
 **As of this change, the known uninstrumented writes are:**
-`MUserDL.storeAllIds` / `storeUsersID` (`EditCustomer.cs:57`, `AddUser.cs:93`) ·
-`AdminDL.storeAllCustomers` at `ViewCustomer.cs:115`, which rewrites the file
+`MUserDL.storeAllIds` / `storeUsersID` (`EditCustomer.cs:74`, `AddUser.cs:93`) ·
+`AdminDL.storeAllCustomers` at `ViewCustomer.cs:125`, which rewrites the file
 whether the edit succeeded **or was cancelled**, so the file changes on paths
 where the trail is correctly silent · `CustomerDL.storeFeedBack`
 (`GiveFeedback.cs:26-27`) · the `calculate*` recompute, which changes a balance
@@ -268,14 +291,37 @@ the data it describes with the same permissions — anyone who can read the
 customer records can edit or truncate the trail. No hash chain, no signature, no
 off-host copy.
 
-### 5.3 · A trustworthy parallel record, not a corrected primary one
+### 5.3 · A *more* trustworthy parallel record, not a corrected primary one
 
 The trail's timestamps come from the system clock. The customer-facing history
 files still take theirs from a `DateTimePicker` (`DepositMoneyCus.cs:59`,
 `WithDrawMoneyCus.cs:28`, `TransactMoneyCus.cs:58`) — **date only, no time
 component** — so the two can be reconciled by day but never ordered within one.
-The trail does not repair the ledger; it gives you something trustworthy to
-compare it against.
+The trail does not repair the ledger; it gives you something better to compare it
+against.
+
+**"Trustworthy" is comparative, and earlier drafts of this section used it as
+though it were absolute.** What the trail's timestamps actually improve on is
+narrow: they are *not operator-supplied*, so a transaction cannot be backdated by
+choosing a date in a picker. That closes the falsifiability limb of rank 3 for the
+trail's own record and nothing more. What they do **not** provide:
+
+- **No UTC offset and no time zone.** Local time only, so an hour is ambiguous
+  across a DST fall-back and the file cannot be ordered across a machine that
+  changes zone.
+- **One-second precision.** Two operations inside the same second are unordered
+  except by file position — which is why the transfer pair relies on
+  `operationId` and adjacency rather than on time.
+- **The clock is mutable.** Any operator who can write the data files can also
+  change the system clock, and §5.2 already establishes they can edit the trail
+  directly. A machine-generated timestamp is harder to falsify than a
+  picker-supplied one; it is not tamper-proof.
+
+Combined with the silent-drop contract of §3, the honest summary is: **a
+system-generated, append-only, best-effort record that is materially harder to
+falsify than the ledger beside it** — not an authoritative one. Making it
+authoritative needs UTC with an offset, sub-second precision, a hash chain and an
+off-host copy, none of which are built.
 
 ### 5.4 · The recorded balance is one of the three that disagree
 
@@ -292,7 +338,7 @@ introduce a **fourth** definition of "what is this customer's balance" into an
 application whose second-ranked finding is that three definitions disagree.
 
 *Consequence worth noting:* on a withdrawal, column 10 is **greater** than column
-9, because `WithDrawMoneyCus.cs:29` adds instead of subtracting (S1). The trail
+9, because `WithDrawMoneyCus.cs:30` adds instead of subtracting (S1). The trail
 records the defect rather than hiding it.
 
 *And on the logout row (site 7) columns 9 and 10 are equal.* Nothing changes at a
@@ -421,7 +467,7 @@ and differ only in `targetFile` (`transactHistory.txt` vs `sendMoneyPath.txt`), 
 Listed so a correct run is not mistaken for a broken one. Each is the trail
 recording a known defect rather than concealing it:
 
-1. **`balanceAfter` > `balanceBefore` on the withdrawal.** `WithDrawMoneyCus.cs:29`
+1. **`balanceAfter` > `balanceBefore` on the withdrawal.** `WithDrawMoneyCus.cs:30`
    adds instead of subtracting (S1). §5.4.
 2. **Both `Transfer` rows carry equal balances.** The handler debits and credits
    nobody (S6). §2.
@@ -430,7 +476,7 @@ recording a known defect rather than concealing it:
    `TotalMoney` in memory before the first click — probe 1's zero-click drift. The
    `LogoutBalanceWrite` row is where that drifted value reaches disk.
 4. **`details` reports a password change that `Users.txt` did not receive.**
-   `EditCustomer.cs:56` passes `previous.UserName`/`previous.Password` *after*
+   `EditCustomer.cs:73` passes `previous.UserName`/`previous.Password` *after*
    `AdminDL.editCustomerData` has overwritten that same object, so the
    credential-store lookup misses. Pre-existing and untouched; the trail recording
    a claimed change that did not land is the capability working as intended.
@@ -444,3 +490,34 @@ by automated tests, because every one of them is a `Click` handler — which is
 rank 5 ("no automated tests, and no seam to add them"). Adding that seam is
 restructuring, and this capability was chosen for changing no behaviour. The
 finding constrained the work rather than being designed around.
+
+### 7.3 · The residual: a site that stops firing is undetectable here
+
+Naming this outright, because §7's "covered by manual execution" understates it.
+**Delete any one `AuditWriter.Append` call and every automated check still
+passes** — the build is clean and all 43 tests are green, because none of them
+exercises a capture site. Re-running §7.1 by hand is the only thing in the
+repository that would notice.
+
+It is worse than an ordinary missing test, because §5.1 already establishes that a
+missing row is not evidence an operation did not happen. A silently un-instrumented
+site is therefore **indistinguishable from a site that legitimately did not fire**,
+so the trail cannot report its own incompleteness.
+
+Three things that would *not* fix this, recorded so they are not mistaken for
+solutions:
+
+- **Extracting record-building into pure functions and testing those** verifies
+  what *would* be recorded, not that the handler calls it. The likeliest regression
+  passes straight through.
+- **A test that replays the handlers' sequence against the DL layer** asserts the
+  test's own transcription of the handlers. It stays green after the real `Append`
+  is deleted.
+- **UI automation** would genuinely cover the sites, and is brittle, slow, needs a
+  new dependency, and is the over-building this capability was chosen to avoid.
+
+What *would* help, and is **not built**: a verifier that mechanically checks a
+trail file — twelve fields per row, header exactly once, `event` within the known
+set, transfer rows paired by `operationId`, every number reparsing, and the row
+count. That turns §7.1's eyeball step into one command with an exit code. It still
+would not prove a site fires; only execution does that.

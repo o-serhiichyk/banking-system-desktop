@@ -66,13 +66,17 @@ references the app with `SkipGetTargetFrameworkProperties` — see the comment i
 dotnet test "BMS WinForm.sln"
 ```
 
-33 NUnit tests over the audit trail's pure surface: RFC 4180 quoting, invariant
-timestamp and number rendering under a comma-decimal and a non-Gregorian culture,
-column order, header-once, password redaction, and the swallow-on-failure
-contract. They cover the writer, not the seven capture sites — every one of those
-is a `Click` handler, which is `FINDINGS.md` rank 5 ("no automated tests, and no
-seam to add them"). Adding that seam is restructuring; the finding constrained the
-work rather than being designed around.
+43 NUnit tests over the audit trail's pure surface: RFC 4180 quoting, round-trip
+exact number rendering, invariant timestamp and number rendering under a
+comma-decimal and a non-Gregorian culture, column order, header-once, password
+redaction, and the swallow-on-failure contract.
+
+They cover the writer, **not the seven capture sites** — every one of those is a
+`Click` handler, which is `FINDINGS.md` rank 5 ("no automated tests, and no seam to
+add them"). Adding that seam is restructuring; the finding constrained the work
+rather than being designed around. Consequence worth knowing before you rely on a
+green suite: deleting any one `AuditWriter.Append` call leaves all 43 passing. See
+`docs/specs/AUDIT_TRAIL.md` §7.3.
 
 ## Validating the audit trail by hand
 
@@ -81,12 +85,26 @@ The seven capture sites are covered by execution, not by tests — every one is 
 
 ### Smoke test (~20 seconds)
 
-Enough to know the feature is alive. From `BMS WinForm/bin/Debug/`:
+Enough to know the feature is alive. **Shell commands below are run from the repo
+root**; the *application* must have `BMS WinForm/bin/Debug/` as its working
+directory, because every data path in it is a bare relative literal (S42).
 
-1. Delete `auditTrail.csv` if present.
-2. Run `BMS WinForm.exe`, log in as `Haider` / `15`.
-3. **Deposit Money** → any amount → **Confirm**.
-4. **Log Out**.
+Clear any previous trail:
+
+```bash
+rm -f "BMS WinForm/bin/Debug/auditTrail.csv"
+```
+
+Then launch the app **from that directory** — double-click
+`BMS WinForm/bin/Debug/BMS WinForm.exe`, or:
+
+```bash
+(cd "BMS WinForm/bin/Debug" && "./BMS WinForm.exe")
+```
+
+1. Log in as `Haider` / `15`.
+2. **Deposit Money** → any amount → **Confirm** → OK.
+3. **Log Out**.
 
 ```bash
 cat "BMS WinForm/bin/Debug/auditTrail.csv"
@@ -105,7 +123,16 @@ already moved the balance in memory before you clicked anything. That drift is w
 the trail exists to make visible, and the `LogoutBalanceWrite` row is where the
 drifted value reaches disk.
 
-Then restore `depositHistory.txt` and `customers.txt` — the run mutates them.
+**Then put the sample data back.** The run appends to `depositHistory.txt` and
+rewrites `customers.txt`. Both are tracked, so no backup is needed — discard the
+changes:
+
+```bash
+git checkout -- "BMS WinForm/bin/Debug/customers.txt" "BMS WinForm/bin/Debug/depositHistory.txt"
+```
+
+Working from a ZIP with no git history, copy those two files aside **before** you
+start, and copy them back afterwards.
 
 ### Full validation
 
@@ -125,4 +152,10 @@ not neutralise these, because escaping them would alter the recorded value, whic
 is the one thing the trail must never do. In Excel: *Data → From Text/CSV*, or set
 every column to Text in the import wizard.
 
-Restore the `.txt` files afterwards; the run mutates them.
+Restore the sample data afterwards — the full run mutates more files than the smoke
+test does, and the `CustomerCreate` steps can corrupt `customers.txt` badly enough
+that **the app will not start** (that is S14, and `FINDINGS.md` documents it):
+
+```bash
+git checkout -- "BMS WinForm/bin/Debug"
+```
