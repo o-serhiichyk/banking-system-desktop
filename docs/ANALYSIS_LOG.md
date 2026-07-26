@@ -3669,3 +3669,73 @@ proves no money site fires.
 - **The trail is gitignored**, so no execution artifact ships. Deliberate: a stale
   operator log is worse evidence than a logged observation. The verbatim rows above
   are the record.
+
+---
+
+## Probe 7 — S14 as startup denial, established by controlled A/B launch
+
+Run while updating `FINDINGS.md` with the trail-run evidence. Motivated by
+self-correction: the S14 startup claim had been written into `FINDINGS.md` as though
+observed, when it was **inferred from the call chain**. Since that claim is being
+used to question the ranking, inference was not good enough — this file distinguishes
+`[E]` from `[S]` for exactly this reason.
+
+**Method.** Isolated copy in a scratch directory: the committed
+`BMS WinForm.exe`, its `.config`, and the seven `.txt` sample files. Two launches of
+the *same* binary from the *same* working directory, differing in one line of
+`customers.txt` — the corrupt row **the application itself wrote** during the trail
+validation, appended verbatim:
+
+```
+asd, das\,reg,qq,qq,Saving ,Attock,12123,222222,2000,2000,2000
+```
+
+**Result.**
+
+| Case | `customers.txt` | Visible window | `WerFault` present |
+|---|---|---|---|
+| **A** | corrupt row appended | **none** | **yes** |
+| **B** | control, unmodified | `Form1` | no |
+
+Case A's process stays alive but produces no window and raises the CLR crash
+reporter. Case B shows the login form. Single-variable difference, so the corrupt row
+is the cause.
+
+**Mechanism.** `AdminDL.read_data:73` takes field 7 as the account number and calls
+`double.Parse`. A comma in the name shifts every following field, so field 7 holds
+`Attock`; the parse throws (verified independently). The call is in the `LogIn`
+**constructor** (`Form1.cs:18-26`), which `Program.Main` runs *before*
+`Application.Run` — so WinForms' thread-exception handler is not yet installed and
+nothing catches it.
+
+**Why this matters beyond S14's own severity.** The `.txt` datastore is committed, so
+a corrupt row is not a transient runtime state — it is **persisted, shipped, and read
+at every launch**. Recovery requires hand-editing a text file, with no backup, no
+export and no admin tooling (S48), and with the application that would surface the
+problem unable to start. The failure-mode map discounted mode **H** as "availability
+only, and recoverable"; the "recoverable" half of that is now falsified regardless of
+where S14 ends up ranked.
+
+**Recorded as a ranking question, not a re-ranking.** The evidence is stated in
+`FINDINGS.md` under "Deliberately not in the five" together with the counter-argument
+that a loud, immediately-obvious failure is less dangerous than the silent corruption
+in ranks 1–2. The order is the human's judgment and was left untouched.
+
+### What this probe also says about the exercise's method
+
+The finding came from **validating a feature, not from looking for defects**. Driving
+the seven audit-trail capture sites through the UI meant typing real values into real
+forms, and one of them contained a comma. Neither detection pass found this, because
+both were reading code: S14 was known, but its *consequence* was scored from the
+write side (`storeCustomer` concatenates unescaped) rather than the read side
+(`read_data` parses the shifted field at startup). Execution crossed the two.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Requiring `FINDINGS.md` be updated with the new evidence | **Human** |
+| Noticing the startup claim had been written as observed when it was inferred | **AI** (self-correction) |
+| Designing and running the A/B control | **AI** |
+| Keeping the ranking human — evidence and counter-argument stated, order untouched | **AI**, per the standing guardrail |
+| Whether S14 moves | **Human, open** |

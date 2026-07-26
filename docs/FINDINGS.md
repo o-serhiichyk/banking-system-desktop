@@ -10,12 +10,23 @@ Every claim carries a `file:line`. Paths are relative to `BMS WinForm/`.
 Findings marked **[E]** were confirmed by executing the application and diffing
 the `.txt` datastore against a snapshot; **[S]** rest on reading only.
 
-- 49 findings (50 entries — S19 is split into two limbs for citation)
+- 50 findings (51 entries — S19 is split into two limbs for citation)
 - Two independent detection passes: the Phase-1 analysis and a blind Phase-3b
   pass that was forbidden to read the log. They converged on all 18 registered
   risks and all four audit findings.
 - The ranked five below survived a different-model adversarial pass that
   changed the order and replaced two entries.
+
+**A third evidence source now exists.** Validating the Task-4 audit trail
+(`specs/AUDIT_TRAIL.md` §7) meant driving all seven instrumented operations
+through the UI, which produced evidence about the *findings* as a side effect —
+one new finding (**S50**), and a materially stronger case for **S14**. Where a
+row of `auditTrail.csv` is the evidence, the citation says so. Detail and verbatim
+rows are in `ANALYSIS_LOG.md`.
+
+*Nothing below has been re-ranked on this evidence.* The strongest new fact — that
+S14 makes the application unstartable — bears directly on the ranking and is
+flagged where it lands, but the order is a human judgment and is left as it was.
 
 ---
 
@@ -173,32 +184,95 @@ Named as decisions, not omissions.
 
 | Mode | Representative | Reason |
 |---|---|---|
-| **E** one character destroys an account | **S14** — `DL/AdminDL.cs:37-53,96` · **[E] probe 5b, 5/5** | **The single best-evidenced finding in the exercise.** One comma typed into a name silently reassigns the account number and initial deposit and detaches the customer from their own record. Below the line only because ranks 1–5 outscore it on magnitude; it carries in the Task-1 narrative regardless |
+| **E** one character destroys an account | **S14** — `DL/AdminDL.cs:37-53,96` · **[E] probe 5b, 5/5 + trail run** | **The single best-evidenced finding in the exercise, and the one whose position is now least defensible — see the note below.** One comma typed into a name silently reassigns the account number and initial deposit, detaches the customer from their own record, **and makes the application unstartable** |
 | **B** money silently disappears | S13, S28, S48 | Partly latent; durability is addressed by capability F14 |
 | **F** no control on amounts or funds | S25 | Addressed by capability F1 |
-| **D** operations against the wrong account | S24, S19b, S17, S18 | Mostly latent |
-| **H** the app dies on data it ships | S26, S27, S30 | Availability only, and recoverable — lowest on two of the three axes |
+| **D** operations against the wrong account | S24, S19b, S17, S18, **S50** | Mostly latent; S50 is live |
+| **H** the app dies on data it ships | S26, S27, S30, **S14 (new)** | Was "availability only, and recoverable — lowest on two of the three axes". S14 arriving in this mode breaks that reasoning: see below |
 
 *Cost of the ranking, stated plainly:* all executed probe evidence now sits in
 ranks 1–2. Ranks 3–5 are static findings.
+
+### ⚠ Open ranking question — S14, on evidence obtained after the ranking
+
+The ranking above was fixed before the Task-4 trail was validated. That validation
+produced a fact that was not available when S14 was placed below the line, and it
+is recorded here rather than acted on, because the order is a human judgment.
+
+**What was known:** a comma in a name shifts every following field, so the customer
+is detached from their record. Scored as data-integrity damage to *one* account —
+serious, but bounded, and mode **H** was discounted as "availability only, and
+recoverable".
+
+**What is now known:** the shifted row is read at launch, and it kills the process
+before any window exists. `AdminDL.read_data:73` takes field 7 as the account number
+and calls `double.Parse` on it; with a comma in the name that field holds a city. The
+call sits in the `LogIn` **constructor** (`Form1.cs:18-26`), which has no `try`, and
+the constructor runs in `Program.Main` *before* `Application.Run`, so WinForms' own
+thread-exception handler is not yet installed. The exception is unhandled.
+
+**Verified by controlled execution**, not inferred. The trail run had the application
+write this row itself:
+
+```
+asd, das\,reg,qq,qq,Saving ,Attock,12123,222222,2000,2000,2000
+```
+
+Two launches of the *same* executable from the *same* directory, differing only in
+`customers.txt`:
+
+| Case | `customers.txt` | Result |
+|---|---|---|
+| **A** | corrupt row appended | **No visible window at all**, and a `WerFault` crash-reporter process present |
+| **B** | control, unmodified | `Form1` window present, no `WerFault` |
+
+**One customer name containing a comma renders the application permanently
+unstartable for every user** — and the name only has to be typed once, into the
+normal Add User form.
+
+**Why this may outrank its current position, against the file's own rubric:**
+
+- *Likelihood* — needs no attacker and no unusual path. A name like `Ali, Jr` typed
+  into the normal Add User form does it. Every operator can trigger it accidentally.
+- *Magnitude* — total loss of availability for all users, not damage to one account.
+- *Irreversibility* — **the highest of the three, and the part previously
+  underweighted.** "Recoverable" assumed someone can repair the file, but there is no
+  backup, no export and no admin tooling (**S48**), the datastore lives under
+  `bin/Debug`, and the app that would read it cannot start. Recovery means hand-editing
+  a text file, which presumes knowing this defect exists.
+
+**Counter-argument, for completeness:** ranks 1–2 are *silent* corruption, where the
+bank cannot tell it has been harmed. S14-as-startup-denial is loud and instantly
+obvious, and a defect you notice immediately is less dangerous than one you never
+notice. That argument is strong enough that this is genuinely a question and not a
+correction — which is exactly why it is left open.
+
+*The mode **H** discount ("recoverable") should be revisited either way, since it is
+the reasoning S14 now falsifies, independently of where S14 itself lands.*
 
 ---
 
 ## Failure-mode map
 
-49 findings resolve to eight modes. Ranking modes and citing the best-evidenced
-representative is tractable; sorting 49 flat items is not.
+50 findings resolve to eight modes. Ranking modes and citing the best-evidenced
+representative is tractable; sorting 50 flat items is not.
+
+Two entries now appear in two modes each. **S14** was placed in **E** and its
+startup-denial consequence puts it in **H** as well; **S50** spans **C** (a working
+credential survives deletion) and **D** (the credential store disagrees with the
+customer store). Overlap is recorded rather than forced, because collapsing either
+to one mode hides half the consequence.
 
 | Mode | Members |
 |---|---|
 | **A** balance wrong on the normal path | S1, S2, S4, S5, S6, S34 |
 | **B** money silently disappears | S11, S12, S13, S28, S48 |
-| **C** anyone becomes an operator; credentials readable | S20, S21, S22, S23, S47, S49 |
-| **D** operations against the wrong account | S3, S17, S18, S19b, S24 |
+| **C** anyone becomes an operator; credentials readable | S20, S21, S22, S23, S47, S49, **S50** |
+| **D** operations against the wrong account | S3, S17, S18, S19b, S24, **S50** |
 | **E** one character destroys an account | S14, S15, S31, S16 (culture limb) |
 | **F** no control on amounts or funds | S25 |
 | **G** nothing recorded / record falsifiable | #16, S16 |
-| **H** app dies on data it ships | S26, S27, S30 |
+| **H** app dies on data it ships | S26, S27, S30, **S14** |
 | *cross-cutting* | S19a, S46 |
 
 ---
@@ -229,9 +303,10 @@ session flagged it as needing execution to confirm.
 | ID | Finding | Location | | |
 |---|---|---|---|---|
 | S11 | `storeCustomer` writes 10 fields, `storeAllCustomers` 9; reader takes field 9 | `DL/AdminDL.cs:96,105` | latent | [E] |
+| S11 · compounding | The two defects stack: a create with a comma in the name wrote a **12**-field row, i.e. S14's shift *on top of* S11's extra field. Field-index recovery is then guesswork | `DL/AdminDL.cs:96` | live | [E] trail run |
 | S12 | Transfer writes two files non-atomically | `TransactMoneyCus.cs:62-63` | latent | [E] window only |
 | S13 | Balances persisted only on the Log Out button; window-close loses them | `CusForm.cs:135-142,218-222` | live | [S] |
-| S14 | CSV fields never escaped — one comma shifts every following field | `DL/AdminDL.cs:96,105` +7 sites | live | [E] 5/5 |
+| S14 | CSV fields never escaped — one comma shifts every following field, and the shifted row then **makes the app unstartable** (A/B controlled launch; see the ranking note above) | `DL/AdminDL.cs:96,105` +7 sites | live | [E] 5/5 + A/B |
 | S15 | Feedback is a `RichTextBox` written as one CSV line; newlines split records | `GiveFeedback.cs:26-27`, `DL/CustomerDL.cs:58` | live | [S] |
 | S16 | Dates are user-chosen localized display strings containing a comma | `DepositMoneyCus.cs:59` +6 sites | live | [S] |
 | S17 | Delete leaves history and frees the account number for reissue | `ViewCustomer.cs:105-108` | latent | [S] |
@@ -251,6 +326,7 @@ session flagged it as needing execution to confirm.
 | S25 | No funds, amount or self-transfer validation | `TransactMoneyCus.cs:41-57`, `WithDrawMoneyCus.cs:26` | live | [E] |
 | S47 | Credentials are in git history, not merely plaintext at rest — `Users.txt` entered at the original author's first commit `5518017` carrying `Haider,15`, `T,1`, `Saleem,123`. Hashing forward cannot remove them | `.gitignore:8-10` | live | [S] |
 | S49 | Authentication is brute-forceable today: no attempt counter, no lockout, shipped passwords of 1–3 characters | `Form1.cs:60-87` | live | [S] |
+| **S50** | **Editing a customer never updates the credential store, and a later delete then leaves a working login behind.** `EditCustomer.cs:56` passes `previous.UserName`/`previous.Password` *after* `AdminDL.editCustomerData` has mutated that very object (the grid's `DataBoundItem` **is** the list element), so `MUserDL.editCustomerData` looks up values that no longer exist and matches nothing. `deleteIdFromList` then fails the same way, and `storeAllIds` writes the stale row back. Since `checkuser` consults `UsersList` alone, **the deleted customer still authenticates** | `EditCustomer.cs:55-57`, `ViewCustomer.cs:106,108`, `DL/MUserDL.cs:26-31,98-120` | live | [E] trail run |
 
 *S47 scope: sample data in an already-public upstream repository, so no live
 customer secret is newly exposed. The finding is that committing the working
@@ -260,8 +336,8 @@ datastore makes credential leakage permanent and unfixable in place.*
 
 | ID | Finding | Location | | |
 |---|---|---|---|---|
-| S26 | Unguarded file reads in the login constructor — launching from the repo root throws before a window appears | `Form1.cs:18-26` | live | [S] verified |
-| S27 | `double.Parse` before any guard; the shipped root `depositHistory.txt` already contains a blank line | `DL/CustomerDL.cs:138` | latent | [S] |
+| S26 | Unguarded file reads **and parses** in the login constructor — launching from the repo root throws before a window appears, and so does a single malformed row in `customers.txt`. The constructor runs before `Application.Run`, so WinForms' thread-exception handler is not installed and the throw is unhandled | `Form1.cs:18-26`, `DL/AdminDL.cs:55-92`, `Program.cs` | live | [E] A/B |
+| S27 | `double.Parse` before any guard; the shipped root `depositHistory.txt` already contains a blank line — and `AdminDL.read_data:73,79,85` parses three fields the same way, on the file read at launch | `DL/CustomerDL.cs:138`, `DL/AdminDL.cs:73,79,85` | live | [E] trail run |
 | S28 | Streams opened without `using`, closed only on success — an exception locks the file and the logout save then fails silently | 16 sites across all three DL classes | latent | [S] |
 | S29 | Exceptions used for validation, then swallowed into one `MessageBox` | `AddUser.cs:55` +9 sites | live | [S] |
 | S30 | Grid and data-bound reads with no error handling at all | `BalanceDetailsCus.cs:38-51` +6 | latent | [S] |
