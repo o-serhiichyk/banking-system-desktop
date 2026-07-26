@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using BMS_WinForm.BL;
@@ -254,6 +255,70 @@ namespace BMS.Tests
             Assert.That(AuditWriter.Quote(details), Is.EqualTo(details));
         }
 
+        // ---- details: the mini-format must not be forgeable ---------------------
+        //
+        // RFC 4180 quoting protects the CSV *field*. It does nothing for the structure
+        // *inside* details, which is its own delimited format (":", the arrow, "; ").
+        // Unescaped, an operator who can set a customer's name can fabricate entries
+        // about fields that never changed — the same unescaped-concatenation defect as
+        // S14, nested one level down.
+
+        [Test]
+        public void DescribeChanges_cannot_fabricate_a_second_change_from_a_crafted_name()
+        {
+            Admin previous = Customer("Alice", "Haider", "15", 9000);
+            Admin update = Customer("Alice" + AuditWriter.Arrow + "Bob; TotalMoney:9000" + AuditWriter.Arrow + "0",
+                "Haider", "15", 9000);
+
+            string details = AuditWriter.DescribeChanges(previous, update);
+
+            // TotalMoney is 9000 on both sides. Nothing may suggest it moved.
+            Assert.That(SplitChanges(details), Has.Length.EqualTo(1),
+                "a crafted name split into more than one change: " + details);
+            Assert.That(SplitChanges(details)[0], Does.StartWith("Name:"));
+        }
+
+        [Test]
+        public void DescribeChanges_keeps_one_entry_per_changed_field_under_crafted_input()
+        {
+            Admin previous = Customer("Alice", "Haider", "15", 9000);
+            Admin update = Customer("x; City:Multan" + AuditWriter.Arrow + "Nowhere", "Haider", "15", 11000);
+
+            string[] changes = SplitChanges(AuditWriter.DescribeChanges(previous, update));
+
+            // Exactly two fields changed: Name and TotalMoney. City did not.
+            Assert.That(changes, Has.Length.EqualTo(2));
+            Assert.That(changes[0], Does.StartWith("Name:"));
+            Assert.That(changes[1], Does.StartWith("TotalMoney:"));
+        }
+
+        [Test]
+        public void DescribeChanges_round_trips_a_value_containing_its_own_delimiters()
+        {
+            const string hostile = "a:b; c";
+            Admin previous = Customer("plain", "Haider", "15", 9000);
+            Admin update = Customer(hostile, "Haider", "15", 9000);
+
+            string[] changes = SplitChanges(AuditWriter.DescribeChanges(previous, update));
+
+            Assert.That(changes, Has.Length.EqualTo(1));
+            string[] sides = SplitSides(changes[0]);
+            Assert.That(sides[0], Is.EqualTo("plain"));
+            Assert.That(sides[1], Is.EqualTo(hostile), "the recorded value must survive unaltered");
+        }
+
+        [Test]
+        public void DescribeChanges_round_trips_a_value_containing_the_arrow()
+        {
+            string hostile = "before" + AuditWriter.Arrow + "after";
+            Admin previous = Customer("plain", "Haider", "15", 9000);
+            Admin update = Customer(hostile, "Haider", "15", 9000);
+
+            string[] sides = SplitSides(SplitChanges(AuditWriter.DescribeChanges(previous, update))[0]);
+
+            Assert.That(sides[1], Is.EqualTo(hostile));
+        }
+
         [Test]
         public void DescribeChanges_survives_a_null_side()
         {
@@ -301,6 +366,59 @@ namespace BMS.Tests
                 return field;
             }
             return field.Substring(1, field.Length - 2).Replace("\"\"", "\"");
+        }
+
+        // A reader for the details mini-format, written from the outside in: it knows
+        // only that values may be quoted, and that delimiters inside a quoted run are
+        // literal. If the writer ever stops escaping, these split too many times and
+        // the forgery tests above fail.
+
+        private static string[] SplitChanges(string details)
+        {
+            List<string> parts = new List<string>();
+            int start = 0;
+            while (true)
+            {
+                int at = IndexOfTopLevel(details, "; ", start);
+                if (at < 0)
+                {
+                    parts.Add(details.Substring(start));
+                    break;
+                }
+                parts.Add(details.Substring(start, at - start));
+                start = at + 2;
+            }
+            return parts.ToArray();
+        }
+
+        private static string[] SplitSides(string change)
+        {
+            int colon = IndexOfTopLevel(change, ":", 0);
+            string rest = change.Substring(colon + 1);
+            int arrow = IndexOfTopLevel(rest, AuditWriter.Arrow, 0);
+            return new[]
+            {
+                Unquote(rest.Substring(0, arrow)),
+                Unquote(rest.Substring(arrow + AuditWriter.Arrow.Length))
+            };
+        }
+
+        private static int IndexOfTopLevel(string s, string token, int from)
+        {
+            bool quoted = false;
+            for (int i = from; i < s.Length; i++)
+            {
+                if (s[i] == '"')
+                {
+                    quoted = !quoted;
+                    continue;
+                }
+                if (!quoted && i + token.Length <= s.Length && string.CompareOrdinal(s, i, token, 0, token.Length) == 0)
+                {
+                    return i;
+                }
+            }
+            return -1;
         }
     }
 }

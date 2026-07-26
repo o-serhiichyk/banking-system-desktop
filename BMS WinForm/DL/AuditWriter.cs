@@ -57,6 +57,12 @@ namespace BMS_WinForm.DL
 
         private static readonly char[] MustQuote = { ',', '"', '\r', '\n' };
 
+        // The details column is its own delimited format nested inside a CSV field, so it
+        // needs its own trigger set: ':' separates field from values, Arrow separates the
+        // values, "; " separates changes, and '"' is the escape character itself.
+        // See QuoteDetail.
+        private static readonly char[] MustQuoteDetail = { ':', ';', '"', '\u2192' };
+
         // Shortest-first; Number() takes the first that reparses equal. See Number().
         private static readonly string[] RoundTripFormats = { "G15", "G16", "G17" };
 
@@ -136,6 +142,40 @@ namespace BMS_WinForm.DL
                 return "";
             }
             if (value.IndexOfAny(MustQuote) < 0)
+            {
+                return value;
+            }
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        /// <summary>
+        /// Quoting for values placed **inside** the `details` column.
+        ///
+        /// RFC 4180 protects the CSV *field*; it does nothing for the structure inside it.
+        /// `details` is its own delimited format — `Field:before→after`, changes joined by
+        /// `"; "` — so an unescaped value containing those delimiters can fabricate
+        /// entries. A customer renamed to `Alice→Bob; TotalMoney:9000→0` produced
+        ///
+        ///     Name:Alice→Alice→Bob; TotalMoney:9000→0
+        ///
+        /// which reads as two changes, the second asserting a balance move that never
+        /// happened. In an audit trail that is a forgery vector, and it is the same
+        /// unescaped-concatenation defect as S14 nested one level down — in the very
+        /// column added to observe S14.
+        ///
+        /// Deliberately the *same* convention as <see cref="Quote"/>: wrap in double
+        /// quotes, double any internal quote. One escaping idiom in the file rather than
+        /// two, and it nests correctly, because the CSV layer then doubles these quotes
+        /// again on the way out. Reversible, so fidelity is preserved — §2's "values are
+        /// never altered" is about the recorded value surviving a round trip, and it does.
+        /// </summary>
+        internal static string QuoteDetail(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+            if (value.IndexOfAny(MustQuoteDetail) < 0)
             {
                 return value;
             }
@@ -233,6 +273,12 @@ namespace BMS_WinForm.DL
             {
                 // Deliberately silent. Instrumentation that can throw would change
                 // behaviour at every call site — see the summary above and spec §3.
+                //
+                // Concurrent instances of the application make this fire in bulk: the
+                // open above uses FileShare.Read, so a second writer fails and loses its
+                // entry. Measured at 21-33% loss (spec §5.7). Deliberately NOT locked
+                // here — see that section for why the fix belongs at the application
+                // level, not in the instrumentation.
             }
         }
 
@@ -240,7 +286,9 @@ namespace BMS_WinForm.DL
         {
             if (!Same(before, after))
             {
-                changes.Add(field + ":" + (before ?? "") + Arrow + (after ?? ""));
+                // The field name is a fixed identifier and never needs quoting; the values
+                // come from operator input and always do. See QuoteDetail.
+                changes.Add(field + ":" + QuoteDetail(before) + Arrow + QuoteDetail(after));
             }
         }
 

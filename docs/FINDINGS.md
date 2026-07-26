@@ -10,7 +10,7 @@ Every claim carries a `file:line`. Paths are relative to `BMS WinForm/`.
 Findings marked **[E]** were confirmed by executing the application and diffing
 the `.txt` datastore against a snapshot; **[S]** rest on reading only.
 
-- 50 findings (51 entries — S19 is split into two limbs for citation)
+- 51 findings (52 entries — S19 is split into two limbs for citation)
 - Two independent detection passes: the Phase-1 analysis and a blind Phase-3b
   pass that was forbidden to read the log. They converged on all 18 registered
   risks and all four audit findings.
@@ -20,7 +20,7 @@ the `.txt` datastore against a snapshot; **[S]** rest on reading only.
 **A third evidence source now exists.** Validating the Task-4 audit trail
 (`specs/AUDIT_TRAIL.md` §7) meant driving all seven instrumented operations
 through the UI, which produced evidence about the *findings* as a side effect —
-one new finding (**S50**), and a materially stronger case for **S14**. Where a
+two new findings (**S50**, **S51**) and a materially stronger case for **S14**. Where a
 row of `auditTrail.csv` is the evidence, the citation says so. Detail and verbatim
 rows are in `ANALYSIS_LOG.md`.
 
@@ -254,8 +254,8 @@ the reasoning S14 now falsifies, independently of where S14 itself lands.*
 
 ## Failure-mode map
 
-50 findings resolve to eight modes. Ranking modes and citing the best-evidenced
-representative is tractable; sorting 50 flat items is not.
+51 findings resolve to eight modes. Ranking modes and citing the best-evidenced
+representative is tractable; sorting 51 flat items is not.
 
 Two entries now appear in two modes each. **S14** was placed in **E** and its
 startup-denial consequence puts it in **H** as well; **S50** spans **C** (a working
@@ -266,7 +266,7 @@ to one mode hides half the consequence.
 | Mode | Members |
 |---|---|
 | **A** balance wrong on the normal path | S1, S2, S4, S5, S6, S34 |
-| **B** money silently disappears | S11, S12, S13, S28, S48 |
+| **B** money silently disappears | S11, S12, S13, S28, S48, **S51** |
 | **C** anyone becomes an operator; credentials readable | S20, S21, S22, S23, S47, S49, **S50** |
 | **D** operations against the wrong account | S3, S17, S18, S19b, S24, **S50** |
 | **E** one character destroys an account | S14, S15, S31, S16 (culture limb) |
@@ -378,6 +378,7 @@ datastore makes credential leakage permanent and unfixable in place.*
 |---|---|---|---|---|
 | S46 | No test project and no seam to add one | `BMS WinForm.csproj` | latent | [S] |
 | S48 | No backup or disaster recovery for the datastore as a whole — the bank's database lives in a build-output directory | `DL/AdminDL.cs:100-109` | latent | [S] |
+| **S51** | **No single-instance guard, and the datastore cannot survive two instances.** `Program.cs:14-20` starts a second copy with no check whatsoever, and both then read the whole customer list into static state at login (`Form1.cs:20-23`) and rewrite the file wholesale from their own memory on every logout (`DL/AdminDL.cs:100-109`). The last writer wins and the other instance's work is gone — silently, with no lock, no share mode and no detection. Two people on a shared folder, or one person who double-clicks twice | `Program.cs:14-20`, `Form1.cs:20-23`, `DL/AdminDL.cs:100-109` | latent | [E] probe 8 |
 
 ---
 

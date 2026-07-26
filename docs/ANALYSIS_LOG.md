@@ -3739,3 +3739,131 @@ write side (`storeCustomer` concatenates unescaped) rather than the read side
 | Designing and running the A/B control | **AI** |
 | Keeping the ranking human — evidence and counter-argument stated, order untouched | **AI**, per the standing guardrail |
 | Whether S14 moves | **Human, open** |
+
+---
+
+## Probe 8 — concurrency loss, a forgeable details column, and one over-build reverted
+
+A second adversarial review raised two defects in the delivered writer. Both were
+real and both were reproduced before being acted on. One was fixed; the other was
+fixed, measured, and then **deliberately reverted** — that reversal is the most
+useful thing in this entry.
+
+### 1 · The `details` column was forgeable — fixed
+
+RFC 4180 protects the CSV *field*. It does nothing for the structure *inside*
+`details`, which is its own delimited format: `Field:before→after`, changes joined by
+`"; "`. Unescaped, an operator who can set a customer's name can fabricate entries.
+
+Renaming a customer to `Alice→Bob; TotalMoney:9000→0` produced
+
+```
+Name:Alice→Alice→Bob; TotalMoney:9000→0
+```
+
+which reads as **two** changes, the second asserting a balance move that never
+happened. `TotalMoney` was 9000 on both sides.
+
+This is the same unescaped-concatenation defect as **S14** — nested one level down,
+**in the column added to observe S14**. In a record whose only job is attribution, a
+forgery vector is not a cosmetic defect, so this one was clearly in scope.
+
+Fixed by quoting values inside `details` on the same convention as the CSV layer
+(wrap in quotes, double internal quotes), triggered by `:`, `;`, `"` or the arrow.
+One escaping idiom in the file rather than two, and it nests correctly because the
+CSV layer doubles those quotes again on the way out. Same input now renders
+
+```
+Name:Alice→"Alice→Bob; TotalMoney:9000→0"
+```
+
+Reversible, so §2's *values are never altered* still holds. Four tests added, written
+as a *reader* would parse the format — they split on unquoted delimiters only, so if
+the writer ever stops escaping, the forgery tests fail rather than the parser
+silently agreeing with the writer. Three of the four failed before the fix.
+
+### 2 · Concurrent instances lose a third of the entries — measured
+
+`StreamWriter(path, append: true)` opens with `FileShare.Read`, so a second writer's
+open fails and §3's `catch` eats it silently.
+
+Reproduced by driving the real `AuditWriter.Append` through reflection from four
+separate processes, 100 appends each (`concurrency_probe.ps1`). Control first:
+
+| Case | Lines | Expected |
+|---|---|---|
+| One writer, 100 appends | **101** | 101 |
+| 4 writers × 100, run 1 | 269 | 401 — **33% lost** |
+| run 2 | 296 | 401 — 26.2% lost |
+| run 3 | 284 | 401 — 29.2% lost |
+| run 4 | 271 | 401 — 32.5% lost |
+| run 5 | 317 | 401 — 21% lost |
+
+The reviewer reported 24–33 surviving of 101 under presumably heavier contention;
+different numbers, identical phenomenon.
+
+**One thing the probe added that the report did not:** of 316 surviving rows in run 5,
+**zero were malformed**. The failure mode is clean loss, not tearing. That matters —
+a reader can work with an incomplete file and cannot work with a corrupt one — so a
+test now pins the *shape* of the failure rather than pretending it does not happen.
+
+### 3 · The `Mutex` fix — built, proven, reverted
+
+A named `Mutex` keyed on the trail's full path was implemented (`DL/AppendLock.cs`),
+serialising appends across threads and processes with a bounded 5-second wait. It
+worked: the same probe returned **401/401 lines on 5/5 runs**, one header, zero
+malformed rows, all 400 operation ids present exactly once.
+
+It was then reverted, on the human's challenge — *"why didn't you push back?"*, citing
+the assignment's own words: **"working, maintainable code, not a complete
+production-ready implementation."** The challenge was correct and the argument had
+been available the whole time:
+
+- **It contradicted the reason this capability was selected.** `CAPABILITIES.md`
+  chooses capability 5 as *"the only candidate that changes no behaviour"*. A lock puts
+  a bounded wait on the UI thread at seven click handlers. Bounded is still blocking,
+  and that trades away the single property the Task-2 decision rested on.
+- **It hardened the wrong layer.** The application cannot survive two instances at
+  all — both load the customer list into static state at login and rewrite the file
+  wholesale from their own memory at logout, so the last writer silently erases the
+  other's work (now **S51**). Locking the trail would have made the *observer* the
+  most concurrency-safe component in the application while the money data it observes
+  stayed unprotected.
+- **The scenario is outside the operating envelope.** Nobody can usefully run two
+  instances, because doing so destroys `customers.txt`. Fixing the trail's losses in a
+  scenario where the ledger is already being clobbered is repairing the symptom in the
+  component that matters least.
+
+**Why the failure happened, stated plainly:** the review labelled it `[P1]`, and that
+label was accepted as a scope decision instead of being tested against the brief. The
+measurement was worth having; the fix was not. Recorded in spec §5.7 with the numbers
+and the reasoning, and filed as **S51** so it lands where it belongs — the application
+level, which is a behaviour change and out of scope.
+
+### 4 · New finding — S51
+
+**No single-instance guard, and the datastore cannot survive two instances.**
+`Program.cs:14-20` starts a second copy with no check; both read the whole customer
+list into static state (`Form1.cs:20-23`) and rewrite the file wholesale from their own
+memory on logout (`DL/AdminDL.cs:100-109`). Last writer wins, silently, with no lock,
+no share mode and no detection. Mode **B** — money silently disappears.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Running the review that raised both defects | **AI** |
+| Reproducing both before acting, including the control run | **AI** |
+| Finding that concurrent loss is clean rather than corrupting | **AI** |
+| Judging the `details` forgery in scope — it is a defect in the delivered contract | **AI** |
+| **Catching that the `Mutex` was an over-build, by quoting the brief** | **Human** |
+| Constructing the argument for the reversal once challenged | **AI** |
+| Not making that argument unprompted, and accepting a `[P1]` label as a scope decision | **AI failure, recorded** |
+
+### Recorded as not done
+
+- **Concurrency is not handled.** Measured, documented in §5.7, filed as S51. The fix
+  is a single-instance guard or DL-level locking — a behaviour change.
+- **`Name` is still absent from `CustomerCreate`**, so the trail still cannot record
+  the value that corrupts `customers.txt` on a create (§2).
+- **The ranking is still untouched**, now with S51 added below the line as well.

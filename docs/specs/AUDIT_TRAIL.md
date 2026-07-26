@@ -133,6 +133,35 @@ one thing a reader needs, because that row appears with **nobody having clicked
 anything**. "Balance" is kept in the name so it greps alongside columns 9 and 10,
 which are what you difference it against.
 
+**The `details` column is a second format, and it is escaped too.** It is its own
+delimited structure nested inside a CSV field — `Field:before→after`, changes joined
+by `"; "` — and RFC 4180 protects the field, not the structure inside it. Left
+unescaped it was **forgeable**: renaming a customer to
+`Alice→Bob; TotalMoney:9000→0` produced
+
+```
+Name:Alice→Alice→Bob; TotalMoney:9000→0
+```
+
+which reads as *two* changes, the second asserting a balance move that never
+happened. In a record whose only job is attribution, that is a forgery vector — and
+it was the same unescaped-concatenation defect as S14, nested one level down, **in
+the column added to observe S14**.
+
+Values inside `details` are therefore quoted on the same convention as the CSV
+layer — wrap in double quotes, double any internal quote — triggered by `:`, `;`,
+`"` or the arrow. One escaping idiom in the file rather than two, and it nests
+correctly because the CSV layer doubles these quotes again on the way out. The same
+input now renders as
+
+```
+Name:Alice→"Alice→Bob; TotalMoney:9000→0"
+```
+
+Reversible, so §2's *values are never altered* still holds: the recorded value
+survives a round trip byte-exact. Field names are fixed identifiers and are never
+quoted.
+
 **Password redaction.** Columns never carry a credential. On `CustomerEdit` the
 `details` column renders a changed password as `Password:[redacted]→[redacted]`,
 and omits it entirely when unchanged — so the fact of a credential change is
@@ -196,6 +225,9 @@ behaviour at every site:
 The failure is not hypothetical: S28 records 16 streams opened without `using`
 and closed only on success, which is exactly the condition that leaves a handle
 open. The cost of swallowing is a silently dropped entry, which is §5.1.
+
+The dominant real-world cause of that swallow is **concurrent instances**, quantified
+and deliberately not fixed here — §5.7.
 
 **Operator identity.** `AuditSession.Operator` is a static string set once, at
 `Form1.cs:72` — immediately after the successful authentication check
@@ -267,7 +299,8 @@ occur** — only that no instrumented path recorded it. Specifically:
 
 - Hand edits to the `.txt` files leave no trace.
 - Any code path added later is uninstrumented by default.
-- A failed append is dropped silently, by design (§3).
+- A failed append is dropped silently, by design (§3) — in bulk under concurrency,
+  see §5.7.
 - The trail follows the working directory like every other data file. Launching
   from a different directory does not fail — `StreamWriter(append: true)`
   *creates* the file — so it quietly starts a **second trail**, and neither is
@@ -378,6 +411,41 @@ position and timestamp, not by id alone. It is **not** adequate for querying a
 whole trail by id, and a trail large enough for that would need the full `Guid`.
 
 ---
+
+### 5.7 · Two instances lose a third of the entries — measured, and not fixed here
+
+`StreamWriter(path, append: true)` opens with `FileShare.Read`, so a second writer's
+open fails and §3 eats it. **Four concurrent writers × 100 appends lost 21–33% of
+entries across five runs** (`ANALYSIS_LOG.md` probe 8). Nothing warns the operator,
+and §5.1 means the loss is indistinguishable from operations that never happened.
+
+*What the failure does not do:* corrupt anything. Every surviving row in the probe was
+a well-formed 12-field record — clean loss, not tearing. A test pins that shape,
+because a reader can work with an incomplete file and cannot work with a malformed
+one.
+
+**A `Mutex` fixing this was built, measured at 401/401 on 5/5 runs, and then
+reverted.** Recorded because the reasoning is the point:
+
+- **It contradicted the reason this capability was chosen.** `CAPABILITIES.md` selects
+  capability 5 as *"the only candidate that changes no behaviour"*. A lock puts a
+  bounded wait on the UI thread at seven click handlers. Bounded is still blocking,
+  and that trades away the property the whole Task-2 decision rested on.
+- **It hardens the wrong layer.** The application cannot survive two instances at all:
+  both read the customer list into static state at login and rewrite the file wholesale
+  from their own memory at logout, so the last writer silently erases the other's work
+  (**S51**). Locking the trail would have made the *observer* the most
+  concurrency-safe component in the application while the money data it observes stayed
+  unprotected.
+- **Concurrency is outside the operating envelope.** Nobody can usefully run two
+  instances, because doing so destroys `customers.txt`. Repairing the trail's losses in
+  a scenario where the ledger is already being clobbered is fixing the symptom in the
+  component that matters least.
+
+The fix belongs at the application level — a single-instance guard, or file locking in
+the DL writers — which is a behaviour change and out of scope for a basic version.
+Filed as **S51** instead.
+
 
 ## 6 · Assumptions
 

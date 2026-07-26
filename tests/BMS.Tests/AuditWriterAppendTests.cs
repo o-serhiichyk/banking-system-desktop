@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using BMS_WinForm.DL;
 using NUnit.Framework;
 
@@ -115,6 +116,37 @@ namespace BMS.Tests
             }
 
             Assert.That(File.ReadAllText(path), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void Concurrent_writers_drop_entries_but_never_corrupt_one()
+        {
+            // Concurrency is out of the application's envelope and is NOT handled — see
+            // spec §5.7 and S51. What this pins is the *shape* of the failure, which is
+            // the part the trail's reader depends on: entries go missing, and whatever
+            // survives is still a well-formed 12-field row. If that ever degrades into
+            // torn or interleaved rows, the file stops being parseable and this fails.
+            Task[] tasks = new Task[4];
+            for (int w = 0; w < tasks.Length; w++)
+            {
+                tasks[w] = Task.Run(() =>
+                {
+                    for (int i = 0; i < 25; i++)
+                    {
+                        AuditWriter.Append(path, Deposit("1"));
+                    }
+                });
+            }
+            Task.WaitAll(tasks);
+
+            string[] lines = Lines();
+
+            Assert.That(lines[0], Is.EqualTo(AuditWriter.HeaderRow), "header must be written once, first");
+            foreach (string line in lines)
+            {
+                Assert.That(line.Split(','), Has.Length.EqualTo(12), "torn row: " + line);
+            }
+            Assert.That(lines.Length, Is.LessThanOrEqualTo(101), "more rows than were written");
         }
 
         private static AuditRecord Deposit(string amount)
