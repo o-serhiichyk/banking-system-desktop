@@ -49,6 +49,14 @@ The path is a bare relative literal, matching the app's existing 16 sites (S42),
 so the trail lands beside the data files it exists to be reconciled against.
 The writer takes the path as a parameter so tests can point it at a temp file.
 
+The **naming** follows the app's convention (camelCase, as `depositHistory.txt`);
+the **extension** deliberately does not. The seven existing `.txt` files are not
+CSV — they are unescaped concatenation, which is S14 — so naming this one `.txt`
+would associate a file that has a format contract with the files whose lack of
+one is a ranked defect. `.csv` makes a promise the file keeps, and it recovers
+part of the deferred viewer: with no search or viewer built, opening the trail in
+a spreadsheet is the investigation path an operator actually has.
+
 **Format** — comma-delimited with **RFC 4180 quoting**: a value is quoted when it
 contains a comma, a double quote, CR or LF; internal quotes are doubled; **values
 are never altered**. The delimiter matches the codebase; the escaping is the part
@@ -90,10 +98,36 @@ held**, in an append-only file, worsening S22/S23.
 `TransactMoneyCus` debits and credits nobody (S6). That is a correct recording of
 what happened and is left visible rather than corrected.
 
-> **Drafting decisions, flagged for veto — neither was settled in review.**
-> (a) The `.csv` extension deviates from the app's `.txt` convention, chosen so
-> the quoting contract is signalled and the file opens in a spreadsheet.
-> (b) A header row is written once, when the file is created.
+**Header row** — written once, when the file is empty. Twelve columns is past
+what a reader reconstructs from memory, and `counterpartyAccount` is empty on six
+of the seven event types, so an uncaptioned deposit row shows several blank fields
+with no way to know what they were.
+
+**Determine emptiness from the stream, not from `File.Exists`.** Open the
+`StreamWriter` in append mode, test `new FileInfo(path).Length == 0`, then write
+the header followed by the record. One file operation. A two-call version could
+have its existence check throw, get swallowed per §3, and silently drop the record
+along with the header — the header must not be able to cost an entry.
+
+*This does not weaken append-only:* the header is written at creation and never
+rewritten. And it is not the "structured output" that §5 defers — that deferral
+is about not building a parser contract, not about refusing to label columns.
+
+## 2a · Types and visibility
+
+`AuditWriter` and `AuditSession` are **`internal`**, matching all three existing
+DL types (`DL/AdminDL.cs:11`, `DL/CustomerDL.cs:11`, `DL/MUserDL.cs:12`), with
+`[assembly: InternalsVisibleTo("BMS.Tests")]` added to the existing
+`Properties/AssemblyInfo.cs`. The assembly is not signed, so the simple name is
+sufficient — no public key.
+
+This is the fix `FINDINGS.md` rank 5 prescribes for its own finding: *"a test
+project, plus `InternalsVisibleTo` or a visibility change."* Choosing it means
+Task 4 enacts the remedy Task 3 recommended. It also does not need redoing —
+the grant is assembly-wide, so `CustomerDL.totalMoney`, the pure function rank 5
+singles out, is already reachable by a later test. Making a single new type
+`public` would solve today's problem and leave the same one for tomorrow, while
+making the new DL type the only public one in the layer.
 
 ---
 
@@ -121,6 +155,12 @@ open. The cost of swallowing is a silently dropped entry, which is §5.1.
 immediately after the successful authentication check at `Form1.cs:66`, before
 the `isAdmin` branch — so both the admin and the customer path populate it
 uniformly.
+
+`AuditSession` is an `internal static class` in `DL/`, beside the writer, holding
+the operator string and nothing else. Not in `BL/` — it is session state, not
+domain. Not a field on `AdminDL` — that class is already the home of the static
+mutable session state S41 flags, and adding to it would deepen the finding the
+trail exists to observe.
 
 **`AdminDL.Current` must never be used as the actor.** It is
 `new Admin()` at `DL/AdminDL.cs:14`, so it is never null and gives no "unset"
@@ -250,18 +290,22 @@ records the defect rather than hiding it.
 quoter (embedded comma · embedded quote · both · CR/LF · empty · `null`),
 password redaction, the changed-field rendering in `details`, timestamp format
 under a non-invariant culture, column order, and the writer's swallow-on-failure
-contract (point it at a locked path; assert it returns and does not throw).
+contract (point it at a locked path; assert it returns and does not throw). Two
+tests specific to the header: that it is written to an empty file and **not**
+written on a second append, and that its captions match the column order —
+otherwise the two drift apart silently.
 
 **Manual — validate by execution.** The same technique that produced the probe
 evidence behind ranks 1 and 2: run the app, perform each operation, diff
 `auditTrail.csv` against a snapshot. The expected result is sharp enough to be
 an assertion:
 
-> **7 operations → 8 entries.** Deposit 1 · withdraw 1 · transfer **2**
-> (sharing an `operationId`) · customer create 1 · customer record edit 1 ·
-> customer delete 1 · logout 1.
+> **7 operations → 8 data rows, 9 lines including the header.** Deposit 1 ·
+> withdraw 1 · transfer **2** (sharing an `operationId`) · customer create 1 ·
+> customer record edit 1 · customer delete 1 · logout 1.
 
-A count of 7 or 9 means a site is mis-wired.
+Count data rows, not lines. Any count other than 8 means a site is mis-wired —
+too few and one is not firing, too many and one is firing twice.
 
 **Stated honestly:** the seven capture sites are covered by manual execution, not
 by automated tests, because every one of them is a `Click` handler — which is

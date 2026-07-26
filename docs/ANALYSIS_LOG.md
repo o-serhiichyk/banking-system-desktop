@@ -3172,3 +3172,99 @@ passes converged and that the ranked five survived an adversarial pass. Those ar
 provenance claims serving as credibility framing for a current-state document.
 Left in place deliberately rather than overlooked; flagged here so the
 inconsistency is visible if it is ever worth resolving.
+
+---
+
+## Task 4 — the four items left open by the scope review, decided
+
+**Date:** 2026-07-26. **Owner:** human, on AI recommendations with trade-offs.
+Closes the items `:2995` recorded as unsettled. Current statement in
+`specs/AUDIT_TRAIL.md`; this entry records the reasoning.
+
+### 1 · Extension — `.csv`, not `.txt`
+
+The convention argument for `.txt` does not survive inspection: **the seven
+existing `.txt` files are not CSV.** They are unescaped concatenation — S14, a
+live ranked defect — so naming the trail `.txt` to match them associates a file
+that has a format contract with the files whose lack of one is the finding.
+`.csv` makes a promise the file keeps.
+
+Split the difference where it is honest to: the **naming** follows the app's
+camelCase convention (`auditTrail.csv`), the **extension** does not. Deviate only
+on the part that carries a factual claim.
+
+Secondary benefit, and not a small one given §5 defers the viewer: opening the
+trail in a spreadsheet is the only investigation path an operator has.
+
+*Guardrail 5 ("don't restructure what you can annotate") was considered and does
+not apply — nothing is restructured; this is a new file.*
+
+### 2 · Header row — yes, determined from the stream
+
+Twelve columns is past what a reader reconstructs from memory, and
+`counterpartyAccount` is empty on six of seven event types, so an uncaptioned
+deposit row shows blank fields with no way to know what they were.
+
+**The implementation constraint is the load-bearing part.** Emptiness is tested
+via `new FileInfo(path).Length == 0` on the already-open append stream, not via a
+separate `File.Exists` call. Because §3 requires the writer to swallow every
+exception, a two-call version could have its existence check throw, get
+swallowed, and silently drop the record along with the header. **The header must
+not be able to cost an entry.**
+
+Rejected objections: it does not weaken append-only (written at creation, never
+rewritten), and it is not the "structured output" §5 defers (that deferral is
+about not building a parser contract, not about refusing to label columns).
+
+**Consequence caught in the same pass:** the validation assertion at §7 read
+"7 operations → 8 entries", which with a header is 9 *lines*. Reworded to 8 data
+rows / 9 lines, and "a count of 7 or 9 means a site is mis-wired" replaced —
+with a header, 9 lines is the success case. The check would have failed on its
+own success.
+
+### 3 · Visibility — `internal` + `InternalsVisibleTo`
+
+All three DL types are `internal` (`DL/AdminDL.cs:11`, `DL/CustomerDL.cs:11`,
+`DL/MUserDL.cs:12`), so `public` would make the new type the only public one in
+the layer. The stronger reason: **this is the fix `FINDINGS.md` rank 5 prescribes
+for its own finding** — *"a test project, plus `InternalsVisibleTo` or a
+visibility change."* Task 4 enacts the remedy Task 3 recommended, which keeps
+Tasks 2–4 one argument.
+
+It also does not need redoing. The grant is assembly-wide, so
+`CustomerDL.totalMoney` — the pure function rank 5 singles out — is already
+reachable by a later test. `public` on one type solves today and leaves tomorrow.
+
+Verified: the assembly is **not signed** (no `SignAssembly` in the csproj), so
+`[assembly: InternalsVisibleTo("BMS.Tests")]` in the existing
+`Properties/AssemblyInfo.cs` needs the simple name only, no public key.
+
+Trade-off accepted: the grant exposes all internals to the test assembly, broader
+than strictly required. Standard .NET Framework practice, and preferable to
+changing production visibility for test convenience.
+
+### 4 · `AuditSession`'s home — `internal static class` in `DL/`
+
+Holds the operator string and nothing else. Not in `BL/` — session state, not
+domain. **Not a field on `AdminDL`** — that class is already the home of the
+static mutable session state S41 flags, and adding to it would deepen the finding
+the trail exists to observe. Decided now specifically so a fresh session does not
+invent a `Session` god-object.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Requiring recommendations with trade-offs rather than a decision | **Human** |
+| The four recommendations and the arguments behind them | **AI** |
+| Catching that a header row breaks the §7 validation count | **AI** |
+| Every decision | **Human** |
+
+### Recorded as not done
+
+- Nothing in `specs/AUDIT_TRAIL.md` is now flagged for veto. The spec is
+  complete enough to implement from cold.
+- Still **not** in the repo and needed by a fresh session: the verified NUnit
+  project configuration, which lives in `private/PLAN.md` §1 (net472 · NUnit 3.14
+  · NUnit3TestAdapter 4.5 · Microsoft.NET.Test.Sdk 17.11 · `ProjectReference`).
+  Deliberately not copied in — `private/` is not committed.
