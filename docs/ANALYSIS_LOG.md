@@ -3425,3 +3425,247 @@ completion, which was the actual design rationale. Corrected in both places.
   is scoped and rejected for this build, not overlooked (§5.4).
 - **`CustomerEdit` still precedes its persist.** The two alternatives are worse or are
   restructuring (§1).
+
+---
+
+## Task 4 — post-commit: validation extended to 7 of 8 rows, and the spec's missing scenario
+
+Follows the entry above and **corrects it**. Committed as `b7ea8b2` (23 files,
++1341/-9) on `main`, on top of the existing linear commit story rather than a
+branch, per `PLAN.md` §3 — the additive history is itself the process evidence.
+
+### 1 · Correction — validation reached 7 of the 8 expected rows, not 2
+
+The entry above states "2 of the 7 operations were executed". That was accurate when
+written and is now badly understated: the human completed the entire customer session
+and then the admin path. Actual `auditTrail.csv`, verbatim:
+
+```
+timestamp,operationId,operator,event,subjectUserName,subjectAccount,counterpartyAccount,amount,balanceBefore,balanceAfter,targetFile,details
+2026-07-26 12:25:32,19875621,Haider,Deposit,Haider,123456,,500,11000,11500,depositHistory.txt,
+2026-07-26 12:26:08,24959c61,Haider,Withdraw,Haider,123456,,600,11500,12100,withDrawHistory.txt,
+2026-07-26 12:26:39,e1208487,Haider,Transfer,Haider,123456,454545,145,12100,12100,transactHistory.txt,
+2026-07-26 12:26:39,e1208487,Haider,Transfer,Haider,123456,454545,145,12100,12100,sendMoneyPath.txt,
+2026-07-26 12:26:57,f26dba3a,Haider,LogoutBalanceWrite,Haider,123456,,,12100,12100,customers.txt,
+```
+
+**5 data rows from 4 operations — the expected 5.** Sites 1, 2, 3 and 7 confirmed by
+execution. What this adds beyond the two-row evidence:
+
+- **The transfer pair works as designed.** Two rows sharing `operationId`
+  `e1208487`, identical but for `targetFile` (`transactHistory.txt` /
+  `sendMoneyPath.txt`), and the only two rows with `counterpartyAccount` populated.
+  This is the §1 design decision validated, not just implemented.
+- **S6 observed.** Both transfer rows read `12100 → 12100`. The handler debits and
+  credits nobody, and the trail records it rather than correcting it.
+- **Site 7 fires and its columns are right.** `amount` empty, balances equal,
+  `targetFile` = `customers.txt`.
+- **Three predicted defects now observed, not one:** S1 (a 600 withdrawal moved the
+  balance 11500 → 12100), S6 (above), and probe 1's zero-click drift (the *first*
+  row already reads `balanceBefore=11000` against `9000` stored).
+
+The admin session then ran, taking the trail to **7 of the expected 8 rows**:
+
+```
+2026-07-26 13:09:21,765f434d,Admin,CustomerCreate,aaa,222222,,2001,,2001,customers.txt,
+2026-07-26 13:10:22,89b90df5,Admin,CustomerEdit,aaa,222222,,,2001,2002,customers.txt,Name:test123aaa→test123aaa2; UserName:aaa→aaa2; Password:[redacted]→[redacted]; AccountType:Saving →Current; City:Attock→Bahawalpur; PhoneNumber:4234235→42342352; AccountNumber:222222→222223; TotalMoney:2001→2002
+```
+
+**The `CustomerEdit` row is the strongest evidence produced in this task**, because
+it validates the design decisions that were argued from code reading rather than
+observed. Seven of them, in one row:
+
+1. **`operator` is `Admin`, not `Haider`.** This is §3's central decision proven in
+   exactly the scenario it was written for. `AdminDL.Current` at this moment still
+   held `Haider` — the previous customer, never cleared on logout, never set on the
+   admin path. Had the actor been taken from it, this row would have named an
+   innocent customer as the author of an admin balance edit. It names the operator
+   instead. The single most load-bearing claim in the spec, confirmed by execution.
+2. **Password redaction works on a real edit.** `Password:[redacted]→[redacted]`.
+   The actual values (`aaa` → `aaa2`) appear nowhere in the file, while the *fact*
+   of the credential change is recorded — the S22/S23 interaction closed.
+3. **The subject is the record's previous identity.** `subjectUserName=aaa`,
+   `subjectAccount=222222`, with the rename to `aaa2`/`222223` visible in `details`
+   — so the row chains back to the `CustomerCreate` entry above it. The §1 choice,
+   working as intended.
+4. **An admin balance edit is recorded with before and after** — `2001 → 2002`,
+   columns 9 and 10. This is ranked risk 3's unlogged-privileged-edit limb, closed.
+5. **Fidelity is exact, including a defect.** `AccountType:Saving →Current`
+   preserves the **trailing space** in the `"Saving "` combo item. The writer altered
+   nothing, which is §2's whole argument against a lossy sanitizer — and it means the
+   trail is usable as evidence about the data-quality defect itself.
+6. **The `"; "` separator earned itself.** Eight changed fields, no comma in the
+   value, so `details` needed no quoting and stays readable in a raw editor.
+7. **UTF-8 with BOM works.** The `→` renders correctly rather than as mojibake.
+
+**And §7.2's fourth false alarm was observed live.** After the edit, `customers.txt`
+holds `test123aaa2,aaa2,aaa2,...` while `Users.txt` still holds `aaa,aaa`. The trail
+reports a password change that the credential store never received, because
+`EditCustomer.cs:56` reads `previous` after `AdminDL.editCustomerData` has already
+overwritten it. Predicted from code, then seen. This is the clearest demonstration
+available that the capability does what it was selected to do: it caught a claimed
+change that did not land.
+
+### 1a · All seven sites confirmed — the §7 assertion holds
+
+The delete then ran, and one extra create, closing the protocol:
+
+```
+2026-07-26 13:11:00,2475d1d9,Admin,CustomerDelete,aaa2,222223,,,2002,,customers.txt,
+2026-07-26 13:12:01,3d08054d,Admin,CustomerCreate,qq,222222,,2000,,2000,customers.txt,
+```
+
+**8 operations → 9 data rows, 10 lines.** Not a contradiction of §7's "7 → 8": one
+extra `CustomerCreate` was performed. The mapping is exact — `Transfer` is the only
+event that produced two rows, every other operation produced exactly one, and no
+operation produced none. **All seven capture sites are now observed by execution.**
+
+Structural check across the finished file: **every one of the 10 lines has exactly
+12 comma-delimited fields** under RFC 4180 splitting, including the `CustomerEdit`
+row carrying eight changed fields. The quoter held on real data.
+
+The `CustomerDelete` row is right in the detail that could have been wrong: the
+subject is `aaa2`/`222223`, the **post-edit** identity, because the grid holds the
+same object `AdminDL.editCustomerData` mutated. `balanceBefore` = 2002,
+`balanceAfter` empty, `amount` empty — the record's last known balance preserved as
+the anchor for history rows the delete orphans.
+
+### 1b · Three findings the execution produced that code reading had not
+
+**(i) S14 is a startup-denial defect, not a data-quality one.** A `Name` containing
+commas was entered on the final create. `AdminDL.storeCustomer` concatenates without
+escaping (S14), so `customers.txt` gained a row of **12** positional fields instead
+of 10:
+
+```
+asd, das\,reg,qq,qq,Saving ,Attock,12123,222222,2000,2000,2000
+```
+
+Every subsequent field is shifted. `AdminDL.read_data` takes field 7 as the account
+number, which is now `Attock`, and calls `double.Parse` on it — verified to throw
+`FormatException`. That call sits in the `LogIn` **constructor** with no `try`, so
+**the application cannot start at all.** One customer name with a comma in it bricks
+the app for every user, permanently, because the corruption is in the file it reads
+at launch. S14 was ranked on data-integrity grounds; this is a stronger case than
+was made for it.
+
+Consequence for the deliverable: the corrupted `customers.txt` was **restored, not
+committed**. Had it shipped, the README's "runs with zero build" claim would have
+been false — the prebuilt exe would crash before showing a window.
+
+**(ii) The trail could not record the value that caused the corruption — a real
+delta against §2's own rationale.** §2 rejects a lossy sanitizer on the grounds that
+*"the trail must be able to record the exact string that caused a corruption, which
+is the one case where fidelity matters most."* On this create it could not: the
+corrupting field is `Name`, and `CustomerCreate` carries `subjectUserName` and
+`subjectAccount` only. `Name` reaches the trail **only** via `details`, and **only**
+on an edit. So the fidelity guarantee is sound for the columns that exist, but the
+columns do not cover the create path's corrupting field. The argument in §2 is
+broader than the record contract in §2 delivers. Recorded as a gap, not repaired —
+adding `Name` to `CustomerCreate` is a change to the record contract.
+
+**(iii) Edit-then-delete leaves a working credential behind.** After the edit
+desynced `Users.txt` (§7.2 item 4), the delete called
+`MUserDL.deleteIdFromList(A.UserName, A.Password)` with the **post-edit** values
+`aaa2`/`aaa2`. `usersList` still held `aaa`/`aaa`, so nothing matched, nothing was
+removed, and `storeAllIds` wrote the row back. Observed: `customers.txt` has no
+`aaa` customer, and `Users.txt` still contains `aaa,aaa`.
+
+`MUserDL.checkuser` consults `UsersList` alone, so **the deleted customer's login
+still authenticates.** It lands in the customer window bound to whatever
+`AdminDL.setCurrent` fails open to (S24). A hard delete that leaves a usable
+credential is a materially worse finding than the orphaned *history* rows S17
+records.
+
+Worth noting precisely what the trail did and did not contribute here: the
+`CustomerDelete` row plus the file exposed it, but **the trail alone would not
+have** — `MUserDL.storeAllIds` is an uninstrumented write (§4, §5.1), so the
+credential store's refusal to change leaves no entry. This is §5.1's "absence is not
+evidence" limitation biting on a real defect, in the first serious use of the trail.
+
+*Noted as an evidence defect:* the trail records `LogoutBalanceWrite` writing
+`12100` to `customers.txt`, but `customers.txt` was subsequently reset and reads
+`9000`. The file is internally inconsistent as an artifact — it describes a state
+that was undone. Harmless to the count, but a clean single-session run would be
+better evidence, and was offered and not taken.
+
+### 2 · The spec contained the assertion but not the scenario
+
+Raised by the human as a question — *"does the implementation spec contain the
+manual test scenario?"* — and the answer was no. §7 carried the technique ("run the
+app, perform each operation"), the 8-row assertion, and the failure interpretation.
+It carried **none of the inputs**: no credentials, no account number to transfer to,
+no `AddUser` values, no ordering constraint.
+
+That mattered more than it looks, because the runnable detail existed **only in
+chat**, which is not a deliverable:
+
+- The step-5 values are not arbitrary — `555555`, `0000000`, `test` and `2000` each
+  clear a specific `AddUser` validator, and a collision with the sample data throws
+  before the store, writing no row.
+- **The ordering constraint**: enter the admin session by logging straight in as
+  admin. Repeating the customer session adds a second `LogoutBalanceWrite` and
+  overshoots the count. Admin logout writes no row —
+  `AdminWindow.btnLogOut_Click_1` does not call `storeAllCustomers`.
+
+Both are now §7.1. A validation step nobody can execute is not one.
+
+**A fourth false-alarm was found while writing §7.2**, not previously recorded:
+`details` reports a password change that `Users.txt` never received, because
+`EditCustomer.cs:56` passes `previous.UserName`/`previous.Password` *after*
+`AdminDL.editCustomerData` has overwritten that same object. Pre-existing and
+untouched. It is the most valuable of the four — the trail catching a claimed change
+that did not land is exactly the detection the capability was chosen for.
+
+### 3 · README — scope corrected twice
+
+First move deleted the README's copy of the scenario outright, to stop the contract
+and the readme drifting. **That overshot**, as the human pointed out: it left "run
+the seven operations" in one sentence — too terse to follow, too long to be a quick
+check. A README reader asks "is it alive?", not "prove all seven sites".
+
+Now split by audience: a **~20-second smoke test** (login → deposit → logout →
+assert 3 lines / 2 data rows) in the README, with full validation delegated to
+§7.1. The smoke test was chosen to cover the writer end to end — file creation,
+header-on-empty, RFC 4180 row, operator identity — plus two capture sites including
+site 7, which nothing else reaches. It also demonstrates the drift on its second
+line, so it doubles as the feature's demo. Login → logout alone is shorter but
+proves no money site fires.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Asking whether the spec contained the runnable scenario | **Human** |
+| Diagnosing that it did not, and what was missing | **AI** |
+| Writing §7.1 / §7.2 and finding the fourth false alarm | **AI** |
+| Catching that deleting the README copy overshot | **Human** |
+| The smoke-test cut (login → deposit → logout) and its rationale | **AI** |
+| Executing the full seven-site scenario | **Human** |
+| Entering a comma in a customer name, which surfaced S14 as fatal | **Human** (incidental) |
+| Diagnosing that it makes the app unstartable, and restoring the sample data | **AI** |
+| Spotting the orphaned working credential after edit-then-delete | **AI** |
+| Scoping this round to the scenario only, declining the verifier script | **Human** |
+
+### Recorded as not done
+
+- **Nothing in §7 is now unobserved.** All seven capture sites fired under manual
+  execution; the row-per-operation mapping is exact.
+- **Three defects found by execution are recorded, not fixed** — S14 as a
+  startup-denial (§1b i), `CustomerCreate` not carrying the field that corrupts the
+  file (§1b ii), and edit-then-delete leaving a usable credential (§1b iii). All
+  three are pre-existing or record-contract changes; this capability was chosen for
+  changing no behaviour.
+- **The corrupted `customers.txt` was restored rather than committed.** Shipping it
+  would have made the "runs with zero build" claim false.
+- **No verifier script.** Proposed — mechanically check 12 fields per row, header
+  once, `event` within the known set, transfer rows paired, numbers reparse, row
+  count — and **declined for this round**. Verification stays manual.
+- **The regression residual is still only implied.** §7's "stated honestly"
+  paragraph says the sites are covered by execution rather than tests, but does not
+  say outright that **a site silently ceasing to fire is undetectable by anything in
+  the repo**, and that re-running §7.1 is the only check. Named here; not yet in the
+  spec.
+- **The trail is gitignored**, so no execution artifact ships. Deliberate: a stale
+  operator log is worse evidence than a logged observation. The verbatim rows above
+  are the record.

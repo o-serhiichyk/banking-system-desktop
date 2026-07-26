@@ -368,8 +368,76 @@ an assertion:
 > withdraw 1 · transfer **2** (sharing an `operationId`) · customer create 1 ·
 > customer record edit 1 · customer delete 1 · logout 1.
 
-Count data rows, not lines. Any count other than 8 means a site is mis-wired —
-too few and one is not firing, too many and one is firing twice.
+Count data rows, not lines — a `details` value may legally contain a newline
+inside a quoted field. Any count other than 8 means a site is mis-wired — too few
+and one is not firing, too many and one is firing twice.
+
+### 7.1 · The scenario, concretely
+
+Stated in full because a validation step nobody can execute is not one. The first
+draft gave the assertion and the technique but none of the inputs, which left the
+runnable detail — the values that clear `AddUser`'s validators, and the ordering
+constraint below — outside the repo.
+
+**Preconditions.** Work in `BMS WinForm/bin/Debug/`; every data path in the app is
+a bare relative literal, so the working directory selects the dataset (§5.1). Copy
+the seven `.txt` files aside and delete `auditTrail.csv`.
+
+**Session A — customer.** Log in as `Haider` / `15`, then:
+
+| Step | Screen | Input | Rows |
+|---|---|---|---|
+| 1 | Deposit Money | any amount, any date → Confirm | 1 `Deposit` |
+| 2 | Withdraw Money | any amount → Confirm | 1 `Withdraw` |
+| 3 | Transact Money | account `454545`, any purpose, any amount → Confirm | **2** `Transfer` |
+| 4 | Log Out | | 1 `LogoutBalanceWrite` |
+
+**Session B — admin.** Log in as `admin` / `1234`, then:
+
+| Step | Screen | Input | Rows |
+|---|---|---|---|
+| 5 | Add User | `Test` · `test` · `t` · `Current` · any city · phone `0000000` · account `555555` · deposit `2000` | 1 `CustomerCreate` |
+| 6 | View Customer → Refresh | **Edit** on `test`: Total Money → `5000`, Password → `t2` | 1 `CustomerEdit` |
+| 7 | View Customer | **Delete** on `test` | 1 `CustomerDelete` |
+
+**Amounts are arbitrary** — the assertion is on the row count and the column
+population, not on values. The step-5 values are not arbitrary: `555555` is a free
+six-digit account, `0000000` a free phone, `test` a free username, and `2000`
+clears the opening-deposit threshold (`AddUser.cs:83`, itself off by one — S8).
+Any of those colliding with the sample data throws before the store, and no row is
+written.
+
+**Ordering constraint.** Enter session B by logging straight in as admin. Repeating
+session A adds a second `LogoutBalanceWrite` and overshoots the count. Admin logout
+writes **no** row — `AdminWindow.btnLogOut_Click_1` does not call
+`storeAllCustomers`, so site 7 is not on that path.
+
+**Also check, beyond the count:** the two `Transfer` rows share one `operationId`
+and differ only in `targetFile` (`transactHistory.txt` vs `sendMoneyPath.txt`), and
+`counterpartyAccount` is populated on those two rows and empty on the other six.
+
+### 7.2 · Four results that look like failures and are not
+
+Listed so a correct run is not mistaken for a broken one. Each is the trail
+recording a known defect rather than concealing it:
+
+1. **`balanceAfter` > `balanceBefore` on the withdrawal.** `WithDrawMoneyCus.cs:29`
+   adds instead of subtracting (S1). §5.4.
+2. **Both `Transfer` rows carry equal balances.** The handler debits and credits
+   nobody (S6). §2.
+3. **The deposit's `balanceBefore` does not match `customers.txt`.** The
+   `calculate*` recompute (`DL/CustomerDL.cs:198,217,234,248`) has already moved
+   `TotalMoney` in memory before the first click — probe 1's zero-click drift. The
+   `LogoutBalanceWrite` row is where that drifted value reaches disk.
+4. **`details` reports a password change that `Users.txt` did not receive.**
+   `EditCustomer.cs:56` passes `previous.UserName`/`previous.Password` *after*
+   `AdminDL.editCustomerData` has overwritten that same object, so the
+   credential-store lookup misses. Pre-existing and untouched; the trail recording
+   a claimed change that did not land is the capability working as intended.
+
+**Reading the file.** Import as text — *Data → From Text/CSV* in Excel — rather
+than opening it directly. §5.5. Restore the `.txt` files afterwards; the run
+mutates them.
 
 **Stated honestly:** the seven capture sites are covered by manual execution, not
 by automated tests, because every one of them is a `Click` handler — which is

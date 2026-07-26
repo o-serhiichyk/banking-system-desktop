@@ -76,22 +76,46 @@ work rather than being designed around.
 
 ## Validating the audit trail by hand
 
-The capture sites are covered by execution, not by tests. From
-`BMS WinForm/bin/Debug/`:
+The seven capture sites are covered by execution, not by tests — every one is a
+`Click` handler, which is `FINDINGS.md` rank 5.
 
-1. Delete `auditTrail.csv` if present, and copy the seven `.txt` files aside.
-2. Launch `BMS WinForm.exe`.
-3. Log in as a customer (`Haider` / `15`) and perform **deposit**, **withdraw**,
-   **transfer**, then **Log Out**.
-4. Log in as admin (`admin` / `1234`) and perform **add customer**,
-   **edit customer**, **delete customer**.
-5. Open `auditTrail.csv`.
+### Smoke test (~20 seconds)
 
-Expected, and sharp enough to be an assertion:
+Enough to know the feature is alive. From `BMS WinForm/bin/Debug/`:
 
-> **7 operations → 8 data rows, 9 lines including the header.** Deposit 1 ·
-> withdraw 1 · transfer **2** (sharing an `operationId`) · customer create 1 ·
-> customer record edit 1 · customer delete 1 · logout 1.
+1. Delete `auditTrail.csv` if present.
+2. Run `BMS WinForm.exe`, log in as `Haider` / `15`.
+3. **Deposit Money** → any amount → **Confirm**.
+4. **Log Out**.
+
+```bash
+cat "BMS WinForm/bin/Debug/auditTrail.csv"
+```
+
+Pass: **3 lines — a header and 2 data rows**, `Deposit` then `LogoutBalanceWrite`,
+both with `operator` = `Haider`.
+
+That covers the writer end to end — file created in the working directory, header
+written once, RFC 4180 row, operator identity taken from login — plus two of the
+seven capture sites, including site 7, which nothing else reaches.
+
+It also shows the feature's point in one glance: the deposit row's `balanceBefore`
+will **not** match the `9000` in `customers.txt`, because the `calculate*` recompute
+already moved the balance in memory before you clicked anything. That drift is what
+the trail exists to make visible, and the `LogoutBalanceWrite` row is where the
+drifted value reaches disk.
+
+Then restore `depositHistory.txt` and `customers.txt` — the run mutates them.
+
+### Full validation
+
+The smoke test says nothing about the other five sites. The complete scenario is
+**[`docs/specs/AUDIT_TRAIL.md`](docs/specs/AUDIT_TRAIL.md) §7.1** and is
+authoritative: exact inputs, the ordering constraint that keeps the count correct,
+and §7.2's four results that look like failures but are not. It lives in the spec
+rather than here so there is one copy to keep true. Its assertion:
+
+> **7 operations → 8 data rows, 9 lines including the header.**
 
 ⚠️ **Import the trail as text; do not double-click it.** RFC 4180 quoting
 guarantees the file parses back to the values written, but a value beginning with
@@ -100,21 +124,5 @@ and `subjectUserName` and `details` carry operator-entered text. The writer does
 not neutralise these, because escaping them would alter the recorded value, which
 is the one thing the trail must never do. In Excel: *Data → From Text/CSV*, or set
 every column to Text in the import wizard.
-
-Count data rows, not lines — a `details` value may legally contain a newline
-inside a quoted field. Any count other than 8 means a site is mis-wired: too few
-and one is not firing, too many and one is firing twice.
-
-Three results are **expected** and are the trail doing its job rather than bugs
-in it:
-
-- On the withdrawal, `balanceAfter` is **greater** than `balanceBefore`.
-  `WithDrawMoneyCus.cs:29` adds instead of subtracting (S1).
-- The transfer's two rows carry **equal** balances. `TransactMoneyCus` debits and
-  credits nobody (S6).
-- The deposit's `balanceBefore` is **not** the value in `customers.txt`. The
-  `calculate*` recompute (`DL/CustomerDL.cs:198,217,234,248`) has already moved
-  `TotalMoney` in memory — this is probe 1's zero-click drift, and the logout
-  `LogoutBalanceWrite` row is where that drifted value reaches disk.
 
 Restore the `.txt` files afterwards; the run mutates them.
