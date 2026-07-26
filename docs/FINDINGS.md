@@ -305,15 +305,6 @@ datastore makes credential leakage permanent and unfixable in place.*
 
 ---
 
-## Provenance
-
-Two independent detection passes. The Phase-1 analysis (Opus, single structured
-shot) produced an 18-item risk register; a Phase-3b pass (Opus) was **forbidden
-to read the log** and reproduced all 18 plus all four audit findings, adding 17
-of its own. Its single miss — the absence of logging — is instructive: there is
-no `file:line` to cite for code that was never written.
-
-The ranking was challenged by a different-model adversarial pass (Fable) which
-promoted rank 1 over rank 2, replaced rank 3, and forced the recombination of
-S19. Two of its five attacks were withdrawn under counter-argument. Full
-exchange, scoring and attribution: [`ANALYSIS_LOG.md`](ANALYSIS_LOG.md).
+*How these findings were detected and ranked — the two detection passes, the
+adversarial challenge to the ranking, and attribution — is chronology, and lives
+in [`ANALYSIS_LOG.md`](ANALYSIS_LOG.md).*

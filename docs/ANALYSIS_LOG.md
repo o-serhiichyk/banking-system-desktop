@@ -2989,3 +2989,186 @@ reasoning was internally coherent and rested on an unchecked premise.
 - Per-transaction limits and system-generated ledger timestamps hook into the
   same writer and are **not** built. Over-building this task is the
   scope-discipline trap the brief is testing.
+
+---
+
+## Task 4 — scope review of the audit trail, before implementation
+
+**Date:** 2026-07-26. **Owner:** human-driven adversarial review (grilling
+skill), AI answering. Current statement of what gets built now lives in
+`specs/AUDIT_TRAIL.md`; this entry records **what the review changed and why**.
+
+A draft scope for the basic version was put up for challenge before any code was
+written. Eleven decisions came out of it. Two of them correct claims made earlier
+in this log.
+
+### Supersedes
+
+| Superseded | Current |
+|---|---|
+| `:2987` "Operator identity on the privileged paths is **not** threaded — a stated limitation, not an oversight" | **Reversed.** It is threaded — see below |
+| `:2942-2947` `AdminDL.Current` "is already in scope at all three money call sites", read as the actor source | **Narrowed.** True for the money paths; on the admin paths it must never be used — see below |
+
+### The two reversals
+
+**1 · Operator identity is threaded after all.** The estimate it was left out on
+was wrong in both directions. `CAPABILITIES.md:470` called closing it "a one-line
+constructor change plus its call site" — but `ViewCustomer`, `EditCustomer` and
+`AddUser` are designer-instantiated `UserControl`s, so a constructor parameter
+does not reach them; it needs a session-scoped static set at login. That is still
+about ten lines, changes no record format and no behaviour. Against the trail's
+own business case — *"the system cannot answer who changed this balance"*
+(`CAPABILITIES.md:252`) — shipping one that cannot answer "who" for exactly the
+privileged operations was the weaker position.
+
+**2 · `AdminDL.Current` is not a safe actor source on the admin paths.** The
+earlier check (`:2942`) established it is in scope at the money handlers, which
+is true, and the scope draft carried that forward to all sites. Reading the code
+again: it is `new Admin()` at `DL/AdminDL.cs:14`, so it is never null and gives
+no "unset" signal; the admin branch at `Form1.cs:68-72` never calls `setCurrent`;
+and `current` is not cleared on logout, which only constructs a new `LogIn` in
+the same process (`CusForm.cs:140`). During an admin session it holds **the
+previous customer**. Logging it would have named an innocent customer as the
+actor of an admin balance edit — false attribution in a record whose only job is
+attribution.
+
+### Coverage claim, corrected against the call sites
+
+The scope draft instrumented six sites. Checked against the ten-finding coverage
+table (`CAPABILITIES.md`), four were unreachable from them — including the
+headline one: **Probe 1's 9000 → 11000 with zero clicks is materialised by
+`AdminDL.storeAllCustomers` on the logout button (`CusForm.cs:138`)**, which the
+draft did not instrument. S3, S4 and S5 run through the `calculate*` recompute,
+which writes no file at all.
+
+Resolved two ways rather than one:
+
+- **A seventh site was added** — the logout persist. One entry per logout
+  recording `AdminDL.Current`, not one per customer, because all four
+  balance-mutation sites target `AdminDL.Current.TotalMoney`
+  (`DL/CustomerDL.cs:198,217,234,248`), so every other row `storeAllCustomers`
+  writes is byte-identical to what was loaded at login.
+- **The coverage table was left alone.** It describes the capability — a complete,
+  chokepointed trail, which does reach the recompute. The narrower reach of the
+  basic version is stated as an explicit delta in `specs/AUDIT_TRAIL.md` §4
+  instead of being corrected into the capability spec. Distinction raised by the
+  human after an initial AI proposal to edit the coverage table; the AI proposal
+  was wrong.
+
+### The other decisions
+
+| # | Decision | Turns on |
+|---|---|---|
+| 3 | The writer swallows every exception and never throws | Instrumentation that throws **would** change behaviour: the money handlers wrap their body in `try/catch` to a `MessageBox`, so a failed append shows a failure dialog for a succeeded deposit and skips `clearFormData()` — the likely retry turns one deposit into two. `CusForm.cs:135` and `ViewCustomer.cs:100` have no `try` at all |
+| 4 | Full before/after on customer edit, **password redacted** | "Balance edit" was narrower than the form: `EditCustomer.cs:54` writes eight fields, so account-number changes (S14) and password changes went unrecorded. But recording the password verbatim would accumulate every password a customer ever held, in an append-only file — worsening S22/S23 |
+| 5 | A transfer writes two correlated entries, one per file write | `TransactMoneyCus.cs:62-63` is two uncoordinated writes (S12). One post-hoc entry would assert "transfer completed" in exactly the torn case |
+| 6 | Path relative to CWD, matching the app's 16 existing sites | The trail exists to be reconciled against the data files, so it belongs wherever they are — not pinned to the assembly |
+| 7 | Comma delimiter with **RFC 4180 quoting** | **AI position overturned.** The AI proposed pipe-plus-sanitizer; the human argued comma-with-proper-escaping stays a standard format. Decisive point found in the AI's own proposal: the sanitizer was **lossy**, so the trail would have recorded a cleaned name and been unable to show the exact string that caused an S14 corruption. S14 is not "commas are dangerous" — it is *no escaping* (`DL/AdminDL.cs:96,105`). A rarer delimiter is better odds, not a fix |
+| 8 | Limit 1 enumerates the uninstrumented writes, prefixed "as of this change" | Turns an admission into a demonstration. Sharpest item: `AdminDL.storeAllCustomers` at `ViewCustomer.cs:115` rewrites the file whether the edit succeeded **or was cancelled** — the file changes on a path where the trail is correctly silent |
+| 9 | Record one balance — `AdminDL.Current.TotalMoney`, labelled as the in-memory incremental view | The other two views are unreachable safely. `calculate*Money()` mutates the balance it would be observing; summing the lists in the writer would introduce a **fourth** definition of "what is this customer's balance" into an app whose rank-2 finding is that three disagree. Claim softened from *measurable* to *reconstructible* |
+| 11 | Unit tests on the pure surface; capture sites validated by execution | Reuses the technique behind the ranks 1–2 probe evidence. Expected result is an assertion: **7 operations produce 8 entries**, the transfer being the pair. Capture is untestable because every site is a `Click` handler — which is rank 5, so the finding constrained the work rather than being designed around |
+
+### Document restructure
+
+Raised by the human mid-review: `CAPABILITIES.md` describes capabilities in
+general and should not carry an implementation contract. Its `Scope` and
+`Assumptions and stated limitations` subsections were doing exactly that.
+
+- New `docs/specs/AUDIT_TRAIL.md` — the basic version's contract. `specs/` rather
+  than `features/`, since "features" and "capabilities" are synonyms and the two
+  filenames would give a reader no way to guess which holds what.
+- Those two subsections removed from `CAPABILITIES.md`, replaced by a pointer.
+  The capability-level content in them survives elsewhere in the file:
+  detection-not-prevention in "Coverage is graded, not binary", the falsifiable
+  ledger in the rank-3 residual.
+- Two edits that **are** capability-level: the blast radius (`:261`) gains the
+  logout persist and the `calculate*` recompute, both of which change balances;
+  and an interaction note that before/after capture must redact the password
+  field or it worsens S22/S23 — the idiom the file already uses for capabilities
+  8 and 10.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Putting the draft scope up for adversarial review before writing code | **Human** |
+| The seven coverage/correctness challenges, and the code reads behind them | **AI** |
+| Overturning the delimiter recommendation on the lossiness of the AI's own sanitizer | **Human** |
+| That the basic version's scope must not be corrected into the capability spec | **Human**, against an AI proposal to edit the coverage table |
+| That the implementation contract belongs in a separate, nested document | **Human** |
+| Every decision | **Human** |
+
+The delimiter exchange is the fourth time in the exercise a human challenge
+reversed an AI position on evidence — after the *magnitude* correction (`:2342`),
+the "shipped data is not the domain" correction (`:2745`), and the capability-5
+reversal (`:2940`). Unlike those three, this one was decided by a flaw internal
+to the AI's own proposal rather than by an unchecked premise about the code.
+
+### Recorded as not done
+
+- **Retention, rotation, tamper-evidence, a viewer or search UI, and structured
+  output beyond CSV quoting** remain deferred. Unchanged.
+- **The `calculate*` recompute, the credential-store writes and feedback stay
+  uninstrumented.** Named in `specs/AUDIT_TRAIL.md` §5.1 rather than left to
+  "everything else".
+- **No injectable seam for testing capture.** Restructuring, and this capability
+  was chosen for changing no behaviour.
+- Two decisions were made in drafting rather than in review and are **flagged for
+  veto** in the spec: the `.csv` extension, and a header row written once at file
+  creation.
+
+---
+
+## Provenance of the two current-state artifacts — relocated from them
+
+**Date:** 2026-07-26. **Owner:** human. Follows the split at `:2858`, which made
+this log authoritative for *what happened when* and the two artifacts
+authoritative for *what is true now*.
+
+`FINDINGS.md` and `CAPABILITIES.md` each carried a `Provenance` tail, and
+`CAPABILITIES.md` additionally opened its coverage section by recording that an
+earlier version of the table had overstated mitigation. All three are chronology
+— how the content came to be, and what it used to say — so by the split's own
+rule they belong here. Moved verbatim below; the artifacts keep only what is
+true now.
+
+### From `FINDINGS.md` — detection and ranking provenance
+
+Two independent detection passes. The Phase-1 analysis (Opus, single structured
+shot) produced an 18-item risk register; a Phase-3b pass (Opus) was **forbidden
+to read the log** and reproduced all 18 plus all four audit findings, adding 17
+of its own. Its single miss — the absence of logging — is instructive: there is
+no `file:line` to cite for code that was never written.
+
+The ranking was challenged by a different-model adversarial pass (Fable) which
+promoted rank 1 over rank 2, replaced rank 3, and forced the recombination of
+S19. Two of its five attacks were withdrawn under counter-argument. Full
+exchange, scoring and attribution: `:2639` and `:2781`.
+
+### From `CAPABILITIES.md` — candidate-generation provenance
+
+The 15 F-series candidates were generated by a session that read
+`ANALYSIS_LOG.md` in full — and that log is a risk register, so the session
+produced mitigations for known bugs, which is why four came back `[FIX]` and
+four `[INCOMPLETE]`. The 10 G-series candidates were written afterwards
+specifically to cover the capability gaps that anchoring suppressed. The
+anchoring, and the fact that it was avoided in the defect pass but not this one,
+is recorded here rather than hidden — see `:1159` and `:1547`.
+
+### From `CAPABILITIES.md` — the coverage table was corrected once
+
+An earlier version of the capability table claimed flat mitigation. That
+overstated it: most of the capabilities reduce or bound a risk without closing
+it, and a claim of "mitigates X" is the first thing a reviewer tests. The table
+was regraded to distinguish mitigation from detection, which is what surfaced
+capability 5 as the widest-reaching item on the slate by detection while being
+only partial on the one risk it mitigates — the reading that decided the Task-4
+pick (`:2951`).
+
+### Note on what this leaves behind
+
+`FINDINGS.md` still opens with two summary bullets asserting that two independent
+passes converged and that the ranked five survived an adversarial pass. Those are
+provenance claims serving as credibility framing for a current-state document.
+Left in place deliberately rather than overlooked; flagged here so the
+inconsistency is visible if it is ever worth resolving.
