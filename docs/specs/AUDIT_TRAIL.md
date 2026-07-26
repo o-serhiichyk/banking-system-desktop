@@ -15,7 +15,21 @@ Defect references (`S…`, `rank …`) point at [`../FINDINGS.md`](../FINDINGS.m
 ## 1 · Instrumented call sites
 
 Seven sites. Capture is **after the fact** at every one of them — the operation
-has already been applied and persisted by the time the entry is written.
+has already been applied by the time the entry is written.
+
+**Six of the seven are also after persistence; site 5 is not.** This claim read
+"applied and persisted" at every site in the first draft, and that was wrong.
+`EditCustomer.cs` only mutates the in-memory list; the rewrite of `customers.txt`
+happens after the dialog returns, at `ViewCustomer.cs:115`, which §5.1 lists as
+uninstrumented. So a `CustomerEdit` row names `customers.txt` in `targetFile`
+**before** anything has been written to it, and a failed rewrite leaves an entry
+asserting an edit that never reached the file it names.
+
+Moving the entry to after that rewrite is not available: `ViewCustomer.cs:115`
+runs whether the dialog was confirmed **or cancelled**, so capturing there would
+log edits that did not happen — a worse failure than the one above. Threading a
+success signal out of the dialog is restructuring, which this capability was
+chosen to avoid. Recorded as a limit rather than designed around.
 
 | # | Operation | Site | Entries |
 |---|---|---|---|
@@ -25,7 +39,7 @@ has already been applied and persisted by the time the entry is written.
 | 4 | Customer create | `AddUser.cs:91-93` — after both stores | 1 |
 | 5 | Customer record edit | `EditCustomer.cs:55` — after `editCustomerData` | 1 |
 | 6 | Customer delete | `ViewCustomer.cs:105-108` — after both stores | 1 |
-| 7 | Logout balance persist | `CusForm.cs:138` — after `storeAllCustomers` | 1 |
+| 7 | Logout balance write | `CusForm.cs:138` — after `storeAllCustomers` | 1 |
 
 **Why site 7 exists.** Probe 1 moved a stored balance 9000 → 11000 with a login
 and a logout and **zero clicks**; that write happens here and at no instrumented
@@ -35,10 +49,16 @@ site otherwise. It records `AdminDL.Current` only — one row, not one per custo
 writes is byte-identical to what was loaded at login.
 
 **Why the transfer writes two.** `TransactMoneyCus.cs:62-63` is two independent,
-uncoordinated file writes (S12). One entry per write means a torn transfer is
-visible as a sender entry with no matching recipient entry; a single
-post-hoc entry would assert "transfer completed" in exactly the case where it
-did not. The pair shares an `operationId`.
+uncoordinated file writes (S12). One entry per write means a single post-hoc entry
+cannot assert "transfer completed" in exactly the case where it did not. The pair
+shares an `operationId`.
+
+*What a lone sender entry proves,* stated precisely because the first draft
+overstated it: **not** that the transfer tore. Appends are swallowed (§3), so a
+missing recipient entry means the second data write failed **or** the second
+append did — the two are indistinguishable from the file. It marks the transfer
+**unverified**, which is the honest reading and still strictly more than a single
+entry offers. This is the same asymmetry as §5.1: absence is not evidence.
 
 ---
 
@@ -77,15 +97,23 @@ because the file has no viewer and sorting by eye is the only ordering available
 | 1 | `timestamp` | system clock, invariant format |
 | 2 | `operationId` | 8 chars of a `Guid`, one per handler invocation |
 | 3 | `operator` | from `AuditSession.Operator` — see §3 |
-| 4 | `event` | `Deposit` · `Withdraw` · `Transfer` · `CustomerCreate` · `CustomerEdit` · `CustomerDelete` · `BalancePersist` |
+| 4 | `event` | `Deposit` · `Withdraw` · `Transfer` · `CustomerCreate` · `CustomerEdit` · `CustomerDelete` · `LogoutBalanceWrite` |
 | 5 | `subjectUserName` | the account operated on |
 | 6 | `subjectAccount` | |
 | 7 | `counterpartyAccount` | transfer only, else empty |
-| 8 | `amount` | empty for edit, delete, persist |
+| 8 | `amount` | empty for edit, delete, logout write |
 | 9 | `balanceBefore` | see §5.4 — this is one specific balance |
 | 10 | `balanceAfter` | |
 | 11 | `targetFile` | the file the operation wrote; distinguishes the transfer pair |
 | 12 | `details` | `field:before→after` for changed fields on edit; otherwise empty |
+
+**Event naming.** Every name says what happened in operator terms, not what the
+code did. Site 7 was called `BalancePersist` in the first draft and renamed to
+`LogoutBalanceWrite`: "persist" is developer vocabulary in an operator-facing
+column, and it was the only name that gave no hint of its trigger — which is the
+one thing a reader needs, because that row appears with **nobody having clicked
+anything**. "Balance" is kept in the name so it greps alongside columns 9 and 10,
+which are what you difference it against.
 
 **Password redaction.** Columns never carry a credential. On `CustomerEdit` the
 `details` column renders a changed password as `Password:[redacted]→[redacted]`,
@@ -266,6 +294,42 @@ application whose second-ranked finding is that three definitions disagree.
 *Consequence worth noting:* on a withdrawal, column 10 is **greater** than column
 9, because `WithDrawMoneyCus.cs:29` adds instead of subtracting (S1). The trail
 records the defect rather than hiding it.
+
+*And on the logout row (site 7) columns 9 and 10 are equal.* Nothing changes at a
+persist — the row records the value reaching disk, not a delta. So probe 1's
+9000 → 11000 drift appears as `11000 → 11000`, and recovering the 9000 means
+differencing this row against the session's other rows. That is what §4 means by
+**reconstructible, not measurable**; the row is the anchor for the reconciliation,
+not the measurement itself. Carrying the login-time balance in column 9 would make
+the drift legible in a single row and is the obvious next increment — **not built**,
+because it means holding a second balance in session state, which is a change to
+the record contract rather than an implementation detail.
+
+### 5.5 · Quoting protects the format, not the spreadsheet
+
+RFC 4180 quoting guarantees the file **parses** back to the values written. It does
+not make the file safe to *open*. A value beginning with `=`, `+`, `-` or `@` is
+evaluated as a formula by Excel and LibreOffice, quoted or not, and the values in
+columns 5 and 12 come from operator-entered fields — a customer named `=1+1` lands
+in `details` on an edit.
+
+This is left unmitigated in the file on purpose. Neutralising it means prefixing an
+apostrophe or a tab, which **alters the recorded value** — and §2 rejects a lossy
+transform outright, because recording the exact string that caused a corruption is
+the one case where fidelity matters most. The mitigation belongs in the reading
+procedure instead: **import the file as text, do not double-click it.** Stated in
+the README next to the investigation path it qualifies.
+
+### 5.6 · `operationId` is 32 bits, and is only meaningful locally
+
+Eight hex characters of a `Guid` is 2³², so ids collide by the birthday bound at
+roughly **9,300** operations for a 1% chance and **77,000** for even odds. It is
+not a durable key and must not be used as one.
+
+It is adequate for what §1 asks of it — pairing a transfer's two rows, written
+milliseconds apart and adjacent in the file — because disambiguation there is by
+position and timestamp, not by id alone. It is **not** adequate for querying a
+whole trail by id, and a trail large enough for that would need the full `Guid`.
 
 ---
 

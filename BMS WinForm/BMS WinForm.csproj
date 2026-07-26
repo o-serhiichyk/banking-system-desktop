@@ -116,6 +116,9 @@
       <DependentUpon>DepositMoneyCus.cs</DependentUpon>
     </Compile>
     <Compile Include="DL\AdminDL.cs" />
+    <Compile Include="DL\AuditRecord.cs" />
+    <Compile Include="DL\AuditSession.cs" />
+    <Compile Include="DL\AuditWriter.cs" />
     <Compile Include="DL\CustomerDL.cs" />
     <Compile Include="DL\MUserDL.cs" />
     <Compile Include="EditCustomer.cs">

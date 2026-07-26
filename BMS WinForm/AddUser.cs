@@ -91,6 +91,19 @@ namespace BMS_WinForm
                 AdminDL.storeCustomer(A, customersPath);
                 MUserDL.adduserstoList(U);
                 MUserDL.storeUsersID(U, usersPath);
+                // One entry for the pair of stores. The credential-store write is not an
+                // event of its own — see docs/specs/AUDIT_TRAIL.md §4. No password field
+                // is recorded at all. balanceBefore is empty because no prior balance
+                // existed; AdminDL.Current here is whoever the session last bound, not
+                // this customer, so it must not be used.
+                AuditWriter.Append(new AuditRecord(AuditWriter.EventCustomerCreate)
+                {
+                    SubjectUserName = A.UserName,
+                    SubjectAccount = AuditWriter.Number(A.AccountNumber),
+                    Amount = AuditWriter.Number(A.IntialDeposit),
+                    BalanceAfter = AuditWriter.Number(A.TotalMoney),
+                    TargetFile = customersPath
+                });
                 MessageBox.Show("User Added Succesfully");
                 clearForm();
             }

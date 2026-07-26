@@ -3268,3 +3268,160 @@ invent a `Session` god-object.
   project configuration, which lives in `private/PLAN.md` §1 (net472 · NUnit 3.14
   · NUnit3TestAdapter 4.5 · Microsoft.NET.Test.Sdk 17.11 · `ProjectReference`).
   Deliberately not copied in — `private/` is not committed.
+
+---
+
+## Task 4 — implementation, execution evidence, and the AI review of the result
+
+Built to `specs/AUDIT_TRAIL.md`: three new `internal` DL types (`AuditSession`,
+`AuditRecord`, `AuditWriter`), seven instrumented call sites, `AuditSession.Operator`
+set at `Form1.cs:66`, `[assembly: InternalsVisibleTo("BMS.Tests")]`, and an NUnit
+`net472` project. Solution builds with 0 warnings from the new code; **43** tests green.
+
+### 1 · Toolchain finding — the clean build is broken, and `PLAN.md` §1 was wrong
+
+`PLAN.md` §1 recorded "builds without Visual Studio: `dotnet msbuild` compiles clean"
+as verified ground truth. It is **incremental-only**. A build with an empty
+intermediate directory fails:
+
+```
+error MSB3823: Non-string resources require GenerateResourceUsePreserializedResources
+error MSB3822: Non-string resources require the System.Resources.Extensions assembly
+```
+
+The SDK's MSBuild cannot serialize the images in the `.resx` files. The .NET Framework
+MSBuild that can (`v4.0.30319`, the only one installed) is too old to parse the C# 6
+expression-bodied members already in `BL/` and `DL/` — 15 × `CS1043`. Neither
+toolchain on this machine can build the project from clean.
+
+It works at all because **`obj/Debug/*.resources` are committed** (41 tracked files
+under `obj/`), so `GenerateResource` is skipped as up-to-date. A fresh clone therefore
+builds; `rm -rf "BMS WinForm/obj"` permanently breaks it.
+
+How it surfaced: adding a plain `ProjectReference` from the test project passed
+`TargetFramework=net472` down as a global property, making the app a *distinct* MSBuild
+project instance, which discarded the up-to-date check and re-ran `GenerateResource`.
+Fixed with `SkipGetTargetFrameworkProperties` + `GlobalPropertiesToRemove`. **Not**
+fixed by adding `System.Resources.Extensions`, which would put a NuGet dependency into
+the shipped executable — the capability was chosen for changing nothing.
+
+*This is a correction to a claim this log previously carried as verified. Recorded
+here rather than edited into `PLAN.md`, which is not committed.*
+
+### 2 · Execution evidence — 2 of the 7 sites observed
+
+The §7 manual protocol was started and stopped early (agent-driven UI automation was
+too slow to be worth the budget; the human took over and ran two operations). Actual
+`auditTrail.csv`, verbatim:
+
+```
+timestamp,operationId,operator,event,subjectUserName,subjectAccount,counterpartyAccount,amount,balanceBefore,balanceAfter,targetFile,details
+2026-07-26 12:25:32,19875621,Haider,Deposit,Haider,123456,,500,11000,11500,depositHistory.txt,
+2026-07-26 12:26:08,24959c61,Haider,Withdraw,Haider,123456,,600,11500,12100,withDrawHistory.txt,
+```
+
+Three things this confirms by execution rather than by reading code:
+
+1. **Header written once**, on the empty file, and not repeated on the second append.
+2. **S1 caught in the act.** A 600 withdrawal moved the balance **11500 → 12100**.
+   Column 10 greater than column 9 on a withdrawal is §5.4's predicted consequence,
+   observed.
+3. **Probe 1's zero-click drift, independently reproduced.** `customers.txt` stores
+   `9000` for `Haider`; the *first* row already reads `balanceBefore=11000`. The
+   `calculate*` recompute moved `TotalMoney` +2000 between login and the first click.
+   The original probe inferred this from a before/after file diff; the trail now shows
+   it in a field, on the first row, with no diff required.
+
+**Still unobserved: sites 3–7** (transfer pair, create, edit, delete, logout). The
+§7 assertion of 8 data rows from 7 operations is therefore **not yet demonstrated
+end-to-end** — 2 of 8 rows produced, both correct. Recorded as a gap, not a pass.
+
+### 3 · AI review of the finished implementation, adjudicated
+
+An adversarial review pass was run against the completed code. Four findings accepted,
+one partially rejected. Adjudication and verification method for each:
+
+| # | Finding | Verdict |
+|---|---|---|
+| 1 | `Number()` is not round-trip exact | **Accepted — real defect, fixed** |
+| 2 | `CustomerEdit` is logged before persistence, contradicting §1 | **Accepted — spec claim was false, corrected** |
+| 3 | A lone transfer row does not prove a torn transfer | **Accepted — overclaim in spec and code comment, corrected** |
+| 4 | RFC 4180 quoting does not stop spreadsheet formula injection | **Accepted — new limit §5.5 + README procedure** |
+| 5 | `operationId` is 32 bits and collides | **Accepted as a limit, not fixed — §5.6** |
+| 6 | Logout row "does not capture the change it was added to expose" | **Partially rejected** |
+
+**On 1 — the only functional defect, and it was verified before being believed.**
+`double.ToString(CultureInfo.InvariantCulture)` is `G15` on .NET Framework, so the
+writer was silently rewriting the value it exists to record. Reproduced directly
+(PowerShell 5.1 runs on this CLR, `4.0.30319.42000`):
+
+- `1.2345678901234567` → `1.23456789012346`, does **not** reparse equal.
+- `9007199254740992` → `9.00719925474099E+15` — **scientific notation in a money
+  column**, worse than the reported rounding and not in the review's report.
+
+The obvious fix, `"R"`, was tested and **rejected**: it is itself broken for doubles
+on .NET Framework. `0.84551240822557006` → `0.84551240822557`, fails to reparse. A
+200,000-value random fuzz found 0 failures for both `R` and `G17`, which is why this
+bug survives casual testing — random 64-bit patterns almost never hit the affected
+class. The known-bad literal did hit it.
+
+Shipped fix: walk `G15 → G16 → G17`, take the first that reparses equal. Exact, and
+ordinary money stays readable (`1234.56`, not `G17`'s `1234.5599999999999`). Ten tests
+added pinning each failure mode, including the `R` bug literal and the
+scientific-notation case. Side effect kept deliberately: `0.1 + 0.2` now records as
+`0.30000000000000004`, which is the value the app holds and is ranked finding 4 made
+visible rather than rounded away.
+
+**On 6 — where the review overreached.** It claims the logout row is "only indirectly
+inferable through reconciliation, not visible as claimed". The row does behave as
+described, but §4 already states the divergence is *"reconstructible, not measurable"*
+and that rank 2 is *"detected at the persist only"* — so no claim was contradicted.
+The review measured the implementation against a stronger promise than the spec makes.
+The *underlying* observation is fair, though, and §5.4 now says so explicitly, along
+with the improvement it implies (carry the login-time balance in column 9) and why
+that is **not built**: it means holding a second balance in session state, which
+changes the record contract rather than an implementation detail.
+
+**On 3 — the most interesting accepted finding**, because the flaw was reasoning, not
+code. Both the spec and the code comment claimed a sender row with no recipient row
+made a torn transfer *visible*. It does not: appends are swallowed by design (§3), so
+the same evidence is produced by a failed second **audit** write. The honest claim is
+that the transfer is **unverified** — still strictly better than a single row asserting
+completion, which was the actual design rationale. Corrected in both places.
+
+### 4 · Two defects the review did not find
+
+- **`EditCustomer` aliasing.** `AdminDL.editCustomerData(previous, update)` mutates the
+  *same object* the dialog holds as `previous` (the grid's `DataBoundItem` is the list
+  element). Reading `previous` after the call yields the **new** values on both sides,
+  so the entry is built *before* the call. Caught during implementation, not by review.
+- **`auditTrail.csv` was committable.** It was untracked and unignored, so a run's
+  operator log could have been committed and mistaken for evidence. Now ignored, along
+  with Rider's `*.DotSettings.user`. Caught while staging.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Requiring the spec be implemented as written, not re-litigated | **Human** |
+| Implementation, tests, the seven capture sites | **AI** |
+| Catching the `EditCustomer` aliasing hazard | **AI** |
+| Diagnosing the clean-build failure and rejecting the dependency "fix" | **AI** |
+| Rejecting `BalancePersist` as an unclear event name | **Human** |
+| The rename to `LogoutBalanceWrite` and its rationale | **AI** |
+| Noticing the test project was absent from the solution | **Human** |
+| Running the review, and verifying each finding before acting | **AI** |
+| Rejecting finding 6 as measured against a promise the spec never made | **AI** |
+| Every decision to accept, reject, or defer a finding | **Human** |
+
+### Recorded as not done
+
+- **Sites 3–7 remain unobserved.** The §7 count assertion is unproven end-to-end.
+- **`operationId` stays 32 bits.** Adequate for adjacent-row pairing, documented as
+  unfit as a durable key (§5.6).
+- **Formula injection is not neutralised in the file** — mitigated in the reading
+  procedure instead, because escaping would alter the recorded value (§5.5).
+- **The logout row still carries equal balances.** The login-time-balance improvement
+  is scoped and rejected for this build, not overlooked (§5.4).
+- **`CustomerEdit` still precedes its persist.** The two alternatives are worse or are
+  restructuring (§1).

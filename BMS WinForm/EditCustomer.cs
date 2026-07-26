@@ -52,7 +52,24 @@ namespace BMS_WinForm
                 }
                  double totalMoney = double.Parse(txtTotalMoney.Text);
                 Admin update = new Admin(txtName.Text, txtUserName.Text, txtPassword.Text, cmbAccountType.Text,cmbCity.Text, txtPhoneNumber.Text, accountNumber, previous.IntialDeposit, totalMoney);
+                // Built before the edit, not after: `previous` is the very list element
+                // AdminDL.editCustomerData mutates, so reading it afterwards would report
+                // the new values on both sides. The subject is the record's previous
+                // identity, so a rename chains back to the entries written before it;
+                // the rename itself shows up in details.
+                AuditRecord entry = new AuditRecord(AuditWriter.EventCustomerEdit)
+                {
+                    SubjectUserName = previous.UserName,
+                    SubjectAccount = AuditWriter.Number(previous.AccountNumber),
+                    BalanceBefore = AuditWriter.Number(previous.TotalMoney),
+                    BalanceAfter = AuditWriter.Number(update.TotalMoney),
+                    TargetFile = "customers.txt",
+                    Details = AuditWriter.DescribeChanges(previous, update)
+                };
                 AdminDL.editCustomerData(previous, update);
+                // Written after the in-memory edit but before the enclosing rewrite at
+                // ViewCustomer.cs:115, which is uninstrumented (spec §5.1).
+                AuditWriter.Append(entry);
                 MUserDL.editCustomerData(previous.UserName, previous.Password,txtUserName.Text, txtPassword.Text);
                 MUserDL.storeAllIds("Users.txt");
                 this.Close();

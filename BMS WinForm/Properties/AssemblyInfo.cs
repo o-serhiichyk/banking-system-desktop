@@ -14,6 +14,14 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
+// The audit-trail types are internal, matching the three existing DL types. This grant
+// is what makes them reachable from the test project — the fix FINDINGS.md rank 5
+// prescribes for its own finding ("a test project, plus InternalsVisibleTo or a
+// visibility change"). Assembly-wide on purpose: CustomerDL.totalMoney, the pure
+// function rank 5 singles out, is already reachable by a later test without redoing
+// this. The assembly is not signed, so the simple name is sufficient.
+[assembly: InternalsVisibleTo("BMS.Tests")]
+
 // Setting ComVisible to false makes the types in this assembly not visible
 // to COM components.  If you need to access a type in this assembly from
 // COM, set the ComVisible attribute to true on that type.

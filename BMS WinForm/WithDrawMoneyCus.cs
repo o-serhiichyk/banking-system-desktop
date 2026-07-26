@@ -26,9 +26,22 @@ namespace BMS_WinForm
                 double money = double.Parse(txtWithDrawMoney.Text);
                 Admin A = AdminDL.Current;
                 string date = dateWithDrawMoney.Text;
+                double balanceBefore = A.TotalMoney;
                 A.TotalMoney = A.TotalMoney + money;
                 Customer C = new Customer(AdminDL.Current.UserName,date,money);
                 CustomerDL.storeWithDrawHistory(path, C);
+                // balanceAfter is greater than balanceBefore here: the handler adds
+                // instead of subtracting (S1). The trail records the defect, not a
+                // corrected value.
+                AuditWriter.Append(new AuditRecord(AuditWriter.EventWithdraw)
+                {
+                    SubjectUserName = A.UserName,
+                    SubjectAccount = AuditWriter.Number(A.AccountNumber),
+                    Amount = AuditWriter.Number(money),
+                    BalanceBefore = AuditWriter.Number(balanceBefore),
+                    BalanceAfter = AuditWriter.Number(A.TotalMoney),
+                    TargetFile = path
+                });
                 CustomerDL.WithDrawList.Add(C);
                 MessageBox.Show("Money Withdrawed Succesfully");
                 clearFormData();

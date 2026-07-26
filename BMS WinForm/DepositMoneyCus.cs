@@ -57,9 +57,19 @@ namespace BMS_WinForm
                 double money = double.Parse(txtDepositMoney.Text);
                 Admin A = AdminDL.Current;
                 string date = dateDepositMoney.Text;
+                double balanceBefore = A.TotalMoney;
                 A.TotalMoney = A.TotalMoney + money;
                 Customer C = new Customer(AdminDL.Current.UserName ,money, date);
                 CustomerDL.storeDepositHistory(path, C);
+                AuditWriter.Append(new AuditRecord(AuditWriter.EventDeposit)
+                {
+                    SubjectUserName = A.UserName,
+                    SubjectAccount = AuditWriter.Number(A.AccountNumber),
+                    Amount = AuditWriter.Number(money),
+                    BalanceBefore = AuditWriter.Number(balanceBefore),
+                    BalanceAfter = AuditWriter.Number(A.TotalMoney),
+                    TargetFile = path
+                });
                 CustomerDL.DepositList.Add(C);
                 MessageBox.Show("Money Added Succesfully");
                 clearFormData();

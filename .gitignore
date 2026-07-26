@@ -1,9 +1,19 @@
 # Build intermediates (regenerated on every build — noise, not source)
 obj/
 
-# IDE / editor folders
+# IDE / editor folders and per-user settings
 .idea/
 .vs/
+*.DotSettings.user
+
+# The audit trail is generated per run and records who did what in that session.
+# Unlike the sample .txt data, nothing needs it committed — and a committed one
+# would be a stale operator log that reviewers could mistake for evidence.
+auditTrail.csv
+
+# The test project's bin is noise — nothing needs to run it prebuilt, unlike the
+# app's, so the exemption below does not extend to it.
+tests/**/bin/
 
 # NOTE: bin/ is intentionally NOT ignored.
 # The prebuilt bin/Debug/BMS WinForm.exe and the bin/Debug/*.txt sample data

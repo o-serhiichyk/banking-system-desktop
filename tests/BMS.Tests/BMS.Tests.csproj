@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>BMS.Tests</AssemblyName>
+    <RootNamespace>BMS.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- The project under test is a WinForms exe; nothing here needs a UI thread. -->
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The audit-trail types are internal; reachable via
+         [assembly: InternalsVisibleTo("BMS.Tests")] in the app's AssemblyInfo.cs.
+
+         SkipGetTargetFrameworkProperties / GlobalPropertiesToRemove keep the legacy
+         project from being built here under an extra TargetFramework global property.
+         That would make it a distinct MSBuild project instance, discard the committed
+         obj/Debug/*.resources, and re-run GenerateResource — which fails on this
+         toolchain for any .resx holding an image (MSB3823/MSB3822: the SDK's MSBuild
+         cannot serialize non-string resources). That failure is pre-existing and has
+         nothing to do with the tests; see README "Known build constraint". -->
+    <ProjectReference Include="..\..\BMS WinForm\BMS WinForm.csproj">
+      <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
+      <GlobalPropertiesToRemove>TargetFramework</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
+
+</Project>

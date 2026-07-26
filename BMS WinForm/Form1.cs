@@ -65,6 +65,11 @@ namespace BMS_WinForm
             MUser User = MUserDL.checkuser(U);
             if (User != null)
             {
+                // Set before the isAdmin branch so both paths populate it uniformly.
+                // AdminDL.Current is not usable as the actor: it is never null, is never
+                // set on the admin path, and is not cleared on logout, so during an admin
+                // session it holds the previous customer. See docs/specs/AUDIT_TRAIL.md §3.
+                AuditSession.Operator = User.UserName;
                 if (MUserDL.isAdmin(User))
                 {
                     AdminWindow A = new AdminWindow();

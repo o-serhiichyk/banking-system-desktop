@@ -106,6 +106,16 @@ namespace BMS_WinForm
                 MUserDL.deleteIdFromList(A.UserName, A.Password);
                 AdminDL.storeAllCustomers("customers.txt");
                 MUserDL.storeAllIds("Users.txt");
+                // One entry for the pair of stores; the credential-store write is not an
+                // event of its own (spec §4). balanceAfter is empty — the anchor for this
+                // customer's history rows is gone, which is the point of recording it.
+                AuditWriter.Append(new AuditRecord(AuditWriter.EventCustomerDelete)
+                {
+                    SubjectUserName = A.UserName,
+                    SubjectAccount = AuditWriter.Number(A.AccountNumber),
+                    BalanceBefore = AuditWriter.Number(A.TotalMoney),
+                    TargetFile = "customers.txt"
+                });
                 dataBind();
             }
             else if (usersGV.Columns["Edit"].Index == e.ColumnIndex)

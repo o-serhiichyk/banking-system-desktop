@@ -136,6 +136,20 @@ namespace BMS_WinForm
         {
 
             AdminDL.storeAllCustomers("customers.txt");
+            // Probe 1 moved a stored balance 9000 -> 11000 with a login, a logout and zero
+            // clicks; that write happens here and at no other instrumented site. One row,
+            // not one per customer: all four balance-mutation sites target
+            // AdminDL.Current.TotalMoney (DL/CustomerDL.cs:198,217,234,248), so every
+            // other row this rewrites is byte-identical to what was loaded at login.
+            // Balances are equal by construction — this records the value reaching disk.
+            AuditWriter.Append(new AuditRecord(AuditWriter.EventLogoutBalanceWrite)
+            {
+                SubjectUserName = AdminDL.Current.UserName,
+                SubjectAccount = AuditWriter.Number(AdminDL.Current.AccountNumber),
+                BalanceBefore = AuditWriter.Number(AdminDL.Current.TotalMoney),
+                BalanceAfter = AuditWriter.Number(AdminDL.Current.TotalMoney),
+                TargetFile = "customers.txt"
+            });
             this.Hide();
             LogIn F = new LogIn();
             F.Show();
