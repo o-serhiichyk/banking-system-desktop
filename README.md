@@ -10,7 +10,7 @@ unchanged except where an improvement is explicitly documented.
 
 | Document | What it is |
 |---|---|
-| [`docs/FINDINGS.md`](docs/FINDINGS.md) | Code smells and engineering risks — the five most critical ranked by business risk, plus the full 49-finding catalogue |
+| [`docs/FINDINGS.md`](docs/FINDINGS.md) | Code smells and engineering risks — the five most critical ranked by business risk, plus the full catalogue |
 | [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) | Missing and incomplete functionality — the slate of 10, and what was rejected |
 | [`docs/ANALYSIS_LOG.md`](docs/ANALYSIS_LOG.md) | The append-only audit trail: AI passes, cross-model validation, executed probes, superseded positions, attribution |
 | [`docs/PREDICTION.md`](docs/PREDICTION.md) | Independent hypotheses, committed **before** any AI was run |
@@ -20,11 +20,18 @@ unchanged except where an improvement is explicitly documented.
 up to date. `ANALYSIS_LOG.md` is never rewritten — it records what happened and
 when, including positions later revised.
 
+**What this README deliberately does not contain.** Anything that changes when the
+*code* changes — counts, line numbers, expected values, explanations of why a result
+looks odd — lives in the documents above, and this file points at them. What stays
+here is what changes only when the *workflow* changes: how to build, run and test,
+and the shortest check that the feature is alive. Two counts had already gone stale
+here before that rule was applied.
+
 ---
 
 ## Build
 
-```
+```powershell
 dotnet build "BMS WinForm.sln"
 ```
 
@@ -62,100 +69,75 @@ references the app with `SkipGetTargetFrameworkProperties` — see the comment i
 
 ## Test
 
-```
+```powershell
 dotnet test "BMS WinForm.sln"
 ```
 
-43 NUnit tests over the audit trail's pure surface: RFC 4180 quoting, round-trip
-exact number rendering, invariant timestamp and number rendering under a
-comma-decimal and a non-Gregorian culture, column order, header-once, password
-redaction, and the swallow-on-failure contract.
+NUnit tests over the audit trail's pure surface: RFC 4180 quoting, round-trip exact
+number rendering, invariant rendering under a comma-decimal and a non-Gregorian
+culture, column order, header-once, password redaction, and the swallow-on-failure
+contract.
 
-They cover the writer, **not the seven capture sites** — every one of those is a
-`Click` handler, which is `FINDINGS.md` rank 5 ("no automated tests, and no seam to
-add them"). Adding that seam is restructuring; the finding constrained the work
-rather than being designed around. Consequence worth knowing before you rely on a
-green suite: deleting any one `AuditWriter.Append` call leaves all 43 passing. See
-`docs/specs/AUDIT_TRAIL.md` §7.3.
+They cover the writer, **not the seven capture sites** — every one is a `Click`
+handler with no test seam (`FINDINGS.md` rank 5). Worth knowing before you trust a
+green suite: deleting an `AuditWriter.Append` call leaves it green. See
+[`docs/specs/AUDIT_TRAIL.md`](docs/specs/AUDIT_TRAIL.md) §7.3.
 
 ## Validating the audit trail by hand
 
-The seven capture sites are covered by execution, not by tests — every one is a
-`Click` handler, which is `FINDINGS.md` rank 5.
-
 ### Smoke test (~20 seconds)
 
-Enough to know the feature is alive. **Shell commands below are run from the repo
-root**; the *application* must have `BMS WinForm/bin/Debug/` as its working
-directory, because every data path in it is a bare relative literal (S42).
+Enough to know the feature is alive. Commands are **Windows PowerShell, run from the
+repo root**. The *application* must run with `BMS WinForm\bin\Debug\` as its working
+directory — every data path in it is a bare relative literal (S42) — which the
+`Start-Process` below handles.
 
-Clear any previous trail:
-
-```bash
-rm -f "BMS WinForm/bin/Debug/auditTrail.csv"
+```powershell
+Remove-Item "BMS WinForm\bin\Debug\auditTrail.csv" -ErrorAction Ignore
 ```
 
-Then launch the app **from that directory** — double-click
-`BMS WinForm/bin/Debug/BMS WinForm.exe`, or:
-
-```bash
-(cd "BMS WinForm/bin/Debug" && "./BMS WinForm.exe")
+```powershell
+Start-Process "BMS WinForm\bin\Debug\BMS WinForm.exe" -WorkingDirectory "BMS WinForm\bin\Debug"
 ```
 
 1. Log in as `Haider` / `15`.
 2. **Deposit Money** → any amount → **Confirm** → OK.
 3. **Log Out**.
 
-```bash
-cat "BMS WinForm/bin/Debug/auditTrail.csv"
+```powershell
+Get-Content "BMS WinForm\bin\Debug\auditTrail.csv"
 ```
 
 Pass: **3 lines — a header and 2 data rows**, `Deposit` then `LogoutBalanceWrite`,
 both with `operator` = `Haider`.
 
-That covers the writer end to end — file created in the working directory, header
-written once, RFC 4180 row, operator identity taken from login — plus two of the
-seven capture sites, including site 7, which nothing else reaches.
-
-It also shows the feature's point in one glance: the deposit row's `balanceBefore`
-will **not** match the `9000` in `customers.txt`, because the `calculate*` recompute
-already moved the balance in memory before you clicked anything. That drift is what
-the trail exists to make visible, and the `LogoutBalanceWrite` row is where the
-drifted value reaches disk.
-
-**Then put the sample data back.** The run appends to `depositHistory.txt` and
-rewrites `customers.txt`. Both are tracked, so no backup is needed — discard the
-changes:
-
-```bash
-git checkout -- "BMS WinForm/bin/Debug/customers.txt" "BMS WinForm/bin/Debug/depositHistory.txt"
-```
-
-Working from a ZIP with no git history, copy those two files aside **before** you
-start, and copy them back afterwards.
+The deposit row's `balanceBefore` will **not** match `customers.txt`. That is
+correct, and it is the feature's whole point —
+[`docs/specs/AUDIT_TRAIL.md`](docs/specs/AUDIT_TRAIL.md) §7.2 explains it with three
+other results that look like failures and are not.
 
 ### Full validation
 
-The smoke test says nothing about the other five sites. The complete scenario is
-**[`docs/specs/AUDIT_TRAIL.md`](docs/specs/AUDIT_TRAIL.md) §7.1** and is
-authoritative: exact inputs, the ordering constraint that keeps the count correct,
-and §7.2's four results that look like failures but are not. It lives in the spec
-rather than here so there is one copy to keep true. Its assertion:
+The smoke test reaches two of the seven capture sites. The complete scenario —
+exact inputs, the ordering constraint that keeps the count correct, and the expected
+result — is **[`docs/specs/AUDIT_TRAIL.md`](docs/specs/AUDIT_TRAIL.md) §7.1**, which
+is authoritative. It lives in the spec so there is one copy to keep true.
 
-> **7 operations → 8 data rows, 9 lines including the header.**
+⚠️ **Import the trail as text; do not double-click it.** A value beginning with `=`,
+`+`, `-` or `@` is evaluated as a formula regardless of quoting, and the writer does
+not neutralise it — escaping would alter the recorded value. In Excel: *Data → From
+Text/CSV*. Reasoning in §5.5.
 
-⚠️ **Import the trail as text; do not double-click it.** RFC 4180 quoting
-guarantees the file parses back to the values written, but a value beginning with
-`=`, `+`, `-` or `@` is still evaluated as a formula by Excel and LibreOffice —
-and `subjectUserName` and `details` carry operator-entered text. The writer does
-not neutralise these, because escaping them would alter the recorded value, which
-is the one thing the trail must never do. In Excel: *Data → From Text/CSV*, or set
-every column to Text in the import wizard.
+### Restoring the sample data
 
-Restore the sample data afterwards — the full run mutates more files than the smoke
-test does, and the `CustomerCreate` steps can corrupt `customers.txt` badly enough
-that **the app will not start** (that is S14, and `FINDINGS.md` documents it):
+Any run mutates it, and the full scenario can corrupt `customers.txt` badly enough
+that **the application will not start** — that is S14, documented in
+[`docs/FINDINGS.md`](docs/FINDINGS.md). The files are tracked, so no backup is
+needed:
 
-```bash
+```powershell
 git checkout -- "BMS WinForm/bin/Debug"
 ```
+
+From a ZIP with no git history, copy `BMS WinForm\bin\Debug\*.txt` aside **before**
+you start.
