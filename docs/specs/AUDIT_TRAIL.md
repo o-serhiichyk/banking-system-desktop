@@ -563,8 +563,8 @@ finding constrained the work rather than being designed around.
 
 Naming this outright, because §7's "covered by manual execution" understates it.
 **Delete any one `AuditWriter.Append` call and every automated check still
-passes** — the build is clean and all 43 tests are green, because none of them
-exercises a capture site. Re-running §7.1 by hand is the only thing in the
+passes** — the build is clean and the whole suite is green, because none of its
+tests exercises a capture site. Re-running §7.1 by hand is the only thing in the
 repository that would notice.
 
 It is worse than an ordinary missing test, because §5.1 already establishes that a

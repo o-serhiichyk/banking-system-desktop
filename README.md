@@ -68,6 +68,25 @@ adding a NuGet dependency to the shipped executable. It is why the test project
 references the app with `SkipGetTargetFrameworkProperties` — see the comment in
 `tests/BMS.Tests/BMS.Tests.csproj`.
 
+### A build leaves the tree dirty
+
+`BMS WinForm/obj/Debug/` was committed by the original author (`5518017`), so a
+build rewrites tracked files and `git status` afterwards shows a handful of
+modified binaries. Discard them:
+
+```powershell
+git checkout -- "BMS WinForm/obj"
+```
+
+*Why this looks contradictory.* The `.gitignore` is **not** upstream — it was
+added by this assessment (`4bdd368`) and calls `obj/` "regenerated on every build
+— noise, not source", which reads as though nothing under `obj/` is tracked.
+Ignore rules do not apply to paths already tracked, so the committed
+`*.resources` the section above depends on are unaffected, and so is the dirty
+tree. Untracking them would make the ignore rule honest and break the only build
+that works on this toolchain, so the rule stays and the consequence is documented
+here instead.
+
 ## Test
 
 ```powershell

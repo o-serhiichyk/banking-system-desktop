@@ -3936,3 +3936,71 @@ survives any future re-ranking.
   the map records consequence, not rank.
 - **S51 and S50 were not considered for the five.** Both are recent and both are
   latent; neither was argued for a slot.
+
+---
+
+## Corrections after an external review of the submission
+
+Four checkable claims were challenged by a review of the packaged submission. All
+four were verified before being acted on; three were the reviewer's, one was
+found while confirming them.
+
+**1 · The concurrency probe script was not retained.** Probe 8 above attributes
+the 21–33% loss figure to `concurrency_probe.ps1`. That script was written in a
+scratch directory and never committed, so the measurement is **recorded but not
+re-runnable from this repository**. Stated here rather than reconstructing a
+script after the fact and implying it is the one that produced the numbers. The
+method is fully described in probe 8 — four processes, 100 appends each, driving
+the real `AuditWriter.Append` through reflection, with a single-writer control
+run first — and is reproducible from that description.
+
+**2 · The test count had gone stale in two current-state documents.**
+`CAPABILITIES.md` and `specs/AUDIT_TRAIL.md` §7.3 both said **43**; the suite is
+**48** (9 + 23 `[Test]` methods plus 16 `[TestCase]` rows) since probe 8 added the
+four `details`-escaping tests and the malformed-shape test. Corrected. §7.3 and
+the `CAPABILITIES.md` prediction note now say "the whole suite" instead of a
+number, because the claim they make — *deleting an `Append` call leaves every
+automated check green* — does not depend on the count and should not drift with
+it again. The report deliberately states no test count at all.
+
+**3 · Two errors in the report, corrected in `REPORT.docx`.** The architecture
+block said "40+ forms and user controls"; there are **33** (`33 *.Designer.cs`,
+33 partial `Form`/`UserControl` types), six of which are dead scaffolds (S38), so
+the live count is lower still. And the customer-create flow cited
+`AddUser.cs:91,93` for a claim about the in-memory list appends — those lines are
+`storeCustomer` and `storeUsersID`, the *file writes*; the appends are `:90,92`.
+Both are the kind of counted or cited claim this exercise's method invites a
+reader to check, which is exactly why they are worth correcting rather than
+defending.
+
+**4 · `.gitignore` and the README's build-constraint section read as
+contradictory.** `obj/` is ignored while `BMS WinForm/obj/Debug/*.resources` are
+tracked and load-bearing — both true, since ignore rules do not apply to
+already-tracked paths. The practical consequence is that the documented build
+leaves the tree dirty. Reconciled in the README with the discard command, rather
+than by untracking the resources, which would break the build the README tells a
+reviewer to run.
+
+*Attribution, because the first draft of that README paragraph filed this under
+"Known build constraint (**pre-existing**)" and it is not.* The tracked
+`obj/Debug/` files are the original author's (`5518017`, 2024-02-23), so the dirty
+tree after a build **is** pre-existing and would happen with no `.gitignore` at
+all. The `.gitignore` is **this assessment's** (`4bdd368`, 2026-07-24), so the
+*apparent contradiction* — a rule calling `obj/` "noise, not source" while files
+under it are tracked — is ours, not upstream's. It now sits in its own README
+section with both provenances stated. Filed here because mislabelling one's own
+decision as an inherited constraint is precisely the error this log exists to
+catch.
+
+### Recorded as not done
+
+- **No script was committed for probe 8.** See item 1: the alternative was
+  publishing a reconstruction as though it were the original.
+- **The ranked five were not re-opened.** The review's strongest judgment
+  challenge — that "no validation on any money path" (S25) deserves a ranked slot
+  more than "no automated tests" (rank 5) — is a fair reading. The rubric's own
+  answer is that rank 5's impact *is* the present defects rather than future ones,
+  and rank 5 stays. Recorded because the challenge is stronger than the report's
+  space allows it to be answered, not because it changed the order.
+- **`REPORT.docx` still has no hard page breaks.** Its five-page fit is reflow, and
+  it has been verified only under LibreOffice. Word may paginate differently.

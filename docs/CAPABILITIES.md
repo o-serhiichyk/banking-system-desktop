@@ -502,7 +502,7 @@ the Task-4 build — instrumented call sites, record format, behaviour guarantee
 limits, and how the basic version's coverage is narrower than the capability's —
 is [`specs/AUDIT_TRAIL.md`](specs/AUDIT_TRAIL.md).
 
-**Status: built.** Seven instrumented sites, three new `internal` types in `DL/`, 43
+**Status: built.** Seven instrumented sites, three new `internal` types in `DL/`, 48
 NUnit tests, and all seven sites validated by manual execution. The prediction this
 section rests on — *"the only candidate that changes no behaviour"* — held: the
 change is additive, no existing statement was altered or removed, and the writer
@@ -514,7 +514,7 @@ mirrors the existing `store*` methods" understated two things the build had to
 absorb: `double.ToString` is not round-trip exact on .NET Framework (so the writer
 needed a shortest-exact number formatter, not a `ToString` call), and the seven
 `Click` handlers had no seam, so **§7.3 records that deleting any one `Append` call
-leaves all 43 tests green**. Medium was still the right call; "mirrors the existing
+leaves the whole suite green**. Medium was still the right call; "mirrors the existing
 `store*` methods" was not.
 
 ## Why not the alternatives
