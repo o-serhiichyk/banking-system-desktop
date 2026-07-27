@@ -37,7 +37,7 @@ Pruned from 25 candidates. Composition: **9 [NEW] · 1 [INCOMPLETE] · 0 [FIX]**
 | 5 | **Append-only audit trail** ✅ **built — see `specs/AUDIT_TRAIL.md`** | [NEW] | Medium | **rank 3** · +10 findings | **Partial** mitigation (1 limb of 2) · **broad detection** |
 | 6 | Atomic, recoverable file writes with backup | [NEW] | Medium | S12, S28, S48 | **Partial** on all three |
 | 7 | Transaction receipt and account statement | [NEW] | Medium | rank 2 | **Detects only** |
-| 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** rank 4 |
+| 8 | Product differentiation by account type | [NEW] | Complex | — | ⚠ **worsens** S19a |
 | 9 | Transaction and balance limits | [NEW] | Medium | rank 1, S25 | **Bounds damage** |
 | 10 | Multiple accounts per customer | [NEW] | Complex | — | — |
 
@@ -149,11 +149,12 @@ directory, and the data still lives under `bin/`.*
 discrepancy visible to the customer, which is detection, not mitigation — worth
 stating as such rather than claiming credit for the fix.*
 
-**8 · Product differentiation → ⚠ worsens rank 4.** Interest accrual produces
+**8 · Product differentiation → ⚠ worsens S19a.** Interest accrual produces
 fractional amounts by construction, which turns the `double` exactness problem
 from latent-in-the-demo-data into live. *This capability must not ship before
-rank 4 is fixed. It is the clearest case in the slate of a feature whose
-prerequisite is a defect repair.*
+S19a is fixed. It is the clearest case in the slate of a feature whose
+prerequisite is a defect repair.* (S19a held rank 4 until the ranking revision in
+[`FINDINGS.md`](FINDINGS.md); the dependency is on the finding, not on its rank.)
 
 **9 · Limits → rank 1, S25.** Mitigates nothing outright, but caps the blast
 radius of both: an escalated operator and an unvalidated withdrawal are both

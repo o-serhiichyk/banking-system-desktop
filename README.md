@@ -10,6 +10,7 @@ unchanged except where an improvement is explicitly documented.
 
 | Document | What it is |
 |---|---|
+| [`docs/REPORT.docx`](docs/REPORT.docx) | **The technical report** — the assignment deliverable: reverse engineering, missing functionality, the ranked code review, and the implemented feature. Self-contained; the documents below are its evidence base |
 | [`docs/FINDINGS.md`](docs/FINDINGS.md) | Code smells and engineering risks — the five most critical ranked by business risk, plus the full catalogue |
 | [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) | Missing and incomplete functionality — the slate of 10, and what was rejected |
 | [`docs/ANALYSIS_LOG.md`](docs/ANALYSIS_LOG.md) | The append-only audit trail: AI passes, cross-model validation, executed probes, superseded positions, attribution |

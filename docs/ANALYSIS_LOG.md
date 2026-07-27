@@ -3867,3 +3867,72 @@ no share mode and no detection. Mode **B** — money silently disappears.
 - **`Name` is still absent from `CustomerCreate`**, so the trail still cannot record
   the value that corrupts `customers.txt` on a create (§2).
 - **The ranking is still untouched**, now with S51 added below the line as well.
+
+---
+
+## Ranking revision — S14 enters the five at 4; `double` leaves
+
+Written while drafting the report. The only re-ordering of the ranked five since
+the adversarial pass, and the reason it happened is the point: **evidence arrived
+after the judgment.**
+
+The order was fixed before the Task-4 trail was validated. Probe 7 then established
+by controlled A/B launch that a comma in a customer name does not merely detach one
+customer from their record — the shifted row is parsed in the `LogIn` constructor
+before `Application.Run`, so **the application does not start at all, for anyone**
+(`DL/AdminDL.cs:73`, `Form1.cs:18-26`). That fact did not exist when S14 was placed
+below the line, and both `FINDINGS.md` and probe 7 had recorded it as an open
+question rather than acting on it, because the order is a human judgment.
+
+**Decided:** S14 enters at rank 4. Money-and-identity-as-`double` (S19a/S19b)
+leaves the five and returns to the catalogue.
+
+**Reasoning, against the file's own rubric.**
+
+- *In favour of S14* — likelihood needs no attacker and no unusual path (`Ali, Jr`
+  in the normal Add User form); magnitude is total loss of availability for every
+  user; irreversibility is the limb previously underweighted, since "recoverable"
+  assumed a repair path that does not exist (no backup, no export, no admin tooling
+  — S48 — and the app that would surface it cannot start).
+- *Against placing it higher than 4* — ranks 1–3 are silent, and this one is loud,
+  conditional on one input, and obvious the moment it happens. A defect you notice
+  immediately is less dangerous than one you never notice. That is why it enters
+  the five without leading it, and the counter-argument is preserved in
+  `FINDINGS.md` rather than dropped once the decision went the other way.
+- *Against `double` keeping the slot* — the money limb is certain, but it is a
+  **precondition** finding, not an observed failure: its consequence is that a
+  repaired rank 2 can never be *proven* exact, only observed to be close. Between
+  provable-in-principle harm and executed evidence of total service loss, business
+  risk favours the second. The identity limb additionally needs a typo.
+
+**What did not change.** The rubric (likelihood × magnitude × irreversibility,
+magnitude meaning damage to the bank). Ranks 1, 2, 3 and 5. `double`'s fix, its
+`[S]` evidence grade, and its standing as a precondition for closing rank 2 — it
+is demoted in rank, not downgraded in truth.
+
+**Propagated in the same pass:** `FINDINGS.md` rank 4 section, the rubric's
+structure paragraph and epigraph, the rank-5 impact paragraph (which had argued
+from "ranks 2 and 4 are both one-line arithmetic defects" — no longer true once
+rank 4 changed), the "deliberately not in the five" table, the S14 and S19a
+catalogue rows, and the two `rank 4` cross-references in `CAPABILITIES.md`
+(capability 8's dependency), which now name S19a directly so the dependency
+survives any future re-ranking.
+
+### Attribution
+
+| Point | Owner |
+|---|---|
+| Requiring the ranking be reconciled before the report was drafted | **Human** |
+| Producing the evidence that reopened it (probe 7) | **AI**, on a human instruction to verify an inferred claim |
+| Holding the order open rather than re-ranking on the AI's own initiative | **AI**, per the standing guardrail |
+| **The revision itself — S14 to 4, `double` out** | **Human decision, recorded here** |
+| Propagating the consequences through both current-state documents | **AI** |
+
+### Recorded as not done
+
+- **No other rank moved.** Ranks 1, 2, 3 and 5 were re-examined against the same
+  rubric and left as they were.
+- **The failure-mode map is unchanged.** S14 still appears in both **E** and **H**;
+  the map records consequence, not rank.
+- **S51 and S50 were not considered for the five.** Both are recent and both are
+  latent; neither was argued for a slot.

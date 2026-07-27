@@ -15,7 +15,8 @@ the `.txt` datastore against a snapshot; **[S]** rest on reading only.
   pass that was forbidden to read the log. They converged on all 18 registered
   risks and all four audit findings.
 - The ranked five below survived a different-model adversarial pass that
-  changed the order and replaced two entries.
+  changed the order and replaced two entries, and were revised once more when
+  probe 7 produced evidence that had not existed when the order was fixed.
 
 **A third evidence source now exists.** Validating the Task-4 audit trail
 (`specs/AUDIT_TRAIL.md` §7) meant driving all seven instrumented operations
@@ -24,9 +25,12 @@ two new findings (**S50**, **S51**) and a materially stronger case for **S14**. 
 row of `auditTrail.csv` is the evidence, the citation says so. Detail and verbatim
 rows are in `ANALYSIS_LOG.md`.
 
-*Nothing below has been re-ranked on this evidence.* The strongest new fact — that
-S14 makes the application unstartable — bears directly on the ranking and is
-flagged where it lands, but the order is a human judgment and is left as it was.
+*The ranking has since been revised on this evidence.* The strongest new fact —
+that S14 makes the application unstartable for every user — was obtained after the
+order was fixed, and it moved S14 into the five at rank 4, displacing money-and-
+identity-as-`double` (S19a/S19b) to the catalogue. The decision, the counter-argument
+it had to beat, and its date are in [`ANALYSIS_LOG.md`](ANALYSIS_LOG.md) under
+"Ranking revision".
 
 ---
 
@@ -37,12 +41,15 @@ flagged where it lands, but the order is a human judgment and is left as it was.
 property, not a quantity to minimise, so a money-lost test mis-ranks systemic
 defects.
 
-**Structure:** ranks 1–2 are concrete failures; ranks 3–5 are multipliers on
-them. A multiplier's magnitude is conditional on the thing it multiplies
-occurring, which is why the concrete failures rank above them.
+**Structure:** ranks 1, 2 and 4 are concrete failures; ranks 3 and 5 are
+multipliers on them. A multiplier's magnitude is conditional on the thing it
+multiplies occurring, which is why the silent concrete failures rank above them.
+Rank 4 sits below the multipliers it might otherwise outrank because its failure
+is loud, conditional on one input, and manually recoverable.
 
-> It is broken now (1). It is open now (2). You cannot tell what happened (3).
-> You cannot prove it right (4). And you cannot safely fix it (5).
+> It is open now (1). It is broken now (2). You cannot tell what happened (3).
+> One ordinary keystroke takes it away from everyone (4). And you cannot safely
+> fix any of it (5).
 
 ### 1 · Backdoor plus authorization by username string
 
@@ -119,39 +126,41 @@ from a legitimate one precisely because nothing is recorded.
 **Fix** — system-generated timestamps; an append-only trail carrying operator,
 before/after values and time.
 
-### 4 · Money and identity are `double`
+### 4 · Unescaped delimiter — one comma corrupts a record and stops the application starting
 
-**Location** — `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19`,
-`AddUser.cs:70-77,82`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139`,
-`DepositMoneyCus.cs:57`
-**Mode** — cross-cutting (A, D) · **[S]**
+**Location** — `DL/AdminDL.cs:96,105` (+7 further unescaped write sites),
+`DL/AdminDL.cs:73`, `Form1.cs:18-26`
+**Mode** — E, and H · **[E]**, probe 5b (5/5), the trail run, probe 7 (A/B launch)
 
-Balances and amounts are binary floating point, and account numbers — pure
-identifiers — are `double` too, with three identity decisions made by `==`
-(`AddUser.cs:77`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139`).
+Every record is built by string concatenation with no escaping of the delimiter
+(`DL/AdminDL.cs:96,105`), so one comma typed into an ordinary field shifts every
+following field by one. The shifted row is then read at launch: `read_data` takes
+field 7 as the account number and calls `double.Parse` on it (`DL/AdminDL.cs:73`),
+and with a comma in the name that field holds a city.
 
-**Production impact.** Real banking amounts are fractional; cents are ordinary
-input, not an edge case. Nothing in the codebase constrains amounts to integers
-or rounds them — no `decimal`, no `Math.Round`, no cast, no currency format
-anywhere — and there are three unguarded `double.Parse` entry points for
-user-typed numbers (`DepositMoneyCus.cs:57` with no guard at all;
-`AddUser.cs:82`; `AddUser.cs:70-71` range-checked but **not** integer-checked, so
-`123456.5` is a valid account number under a message reading "Account Number
-Should be of 6 Character"). There is no barrier between a typed `0.10` and the
-ledger.
+**Production impact.** The write side detaches the customer from their own record
+— account number and initial deposit are silently reassigned. The read side is
+worse: the parse runs in the `LogIn` constructor (`Form1.cs:18-26`), which
+`Program.Main` executes *before* `Application.Run`, so WinForms' thread-exception
+handler is not installed and nothing catches the throw. **One customer name
+containing a comma makes the application unstartable for every customer and every
+administrator.** Verified by A/B launch of the same executable from the same
+directory, differing only in `customers.txt` (probe 7): corrupt row → no window
+and a `WerFault` process; control row → the login form. The corrupting row was
+written by the application itself during ordinary use of the Add User form.
 
-Two placement arguments beyond the arithmetic:
+Recovery is hand-editing a text file: there is no backup, no export and no admin
+tooling (S48), the datastore lives under `bin/Debug`, and the application that
+would surface the problem cannot start.
 
-- **Precondition for closing rank 2.** Even after the balance models are
-  repaired, they can never be *proven* to agree — only observed to be close.
-- **Multiplier on rank 3.** With no trustworthy record, a rounding artifact and
-  a fraudulent adjustment are indistinguishable.
+*Why fourth and not higher:* the trigger is one ordinary keystroke and the blast
+radius is total loss of availability, but the failure is loud, instantly obvious
+and recoverable by someone who knows the defect exists — where ranks 1–3 are
+silent, and the bank cannot tell it has been harmed.
 
-*The certainty lives in the money limb.* Cents are ordinary banking input, so
-this is certain; a fractional account number is a typo, so the identity limb is
-conditional. Lead with money.
-
-**Fix** — `decimal` for monetary fields; `string` or `int` for account numbers.
+**Fix** — quote and escape on write (RFC 4180 or equivalent), reject or encode the
+delimiter on input, and guard the launch-time parse so one bad row quarantines
+itself instead of killing the process.
 
 ### 5 · No automated tests, and no seam to add them
 
@@ -164,11 +173,13 @@ reading global mutable state and opening files by relative path (S41).
 `CustomerDL.totalMoney` is the only pure function on the money path, and it is
 `static` on an `internal` class.
 
-**Production impact — stated without hedging.** Ranks 2 and 4 are both one-line
-arithmetic defects, both live today, and both are exactly what a single unit
-test catches. The production impact of having no tests is not future breakage:
-it is that two of the other four ranked entries **exist at all**, and that every
-fix to them ships unverified.
+**Production impact — stated without hedging.** Rank 2 is carried by two one-line
+arithmetic defects — withdrawal credits instead of debiting
+(`WithDrawMoneyCus.cs:30`) and the available balance omits the opening deposit
+(`DL/CustomerDL.cs:253-259`). Both are live today, and both are exactly what a
+single unit test catches. The production impact of having no tests is not future
+breakage: it is that the highest-value ranked defect **exists at all**, and that
+every fix to it, and to ranks 1, 3 and 4, ships unverified.
 
 Admitted under the assignment's *"code smells **or** engineering risks"*;
 ordered fifth by business risk, as the same brief requires.
@@ -184,71 +195,61 @@ Named as decisions, not omissions.
 
 | Mode | Representative | Reason |
 |---|---|---|
-| **E** one character destroys an account | **S14** — `DL/AdminDL.cs:37-53,96` · **[E] probe 5b, 5/5 + trail run** | **The single best-evidenced finding in the exercise, and the one whose position is now least defensible — see the note below.** One comma typed into a name silently reassigns the account number and initial deposit, detaches the customer from their own record, **and makes the application unstartable** |
-| **B** money silently disappears | S13, S28, S48 | Partly latent; durability is addressed by capability F14 |
+| **A/D** money and identity are `double` | **S19a, S19b** — `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19`, `AddUser.cs:70-77,82`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139` · **[S]** | **Held rank 4 until the revision below.** Certain in the money limb — cents are ordinary banking input and nothing rounds, casts or formats currency anywhere — but it is a *precondition* finding: it means rank 2 can never be **proven** correct after repair, only observed to be close. No observed failure, and the identity limb needs a typo (`123456.5` passes a six-character check). Displaced by a finding with executed evidence of total service loss |
+| **B** money silently disappears | S13, S28, S48, **S51** | Partly latent; durability is addressed by capability F14 |
 | **F** no control on amounts or funds | S25 | Addressed by capability F1 |
 | **D** operations against the wrong account | S24, S19b, S17, S18, **S50** | Mostly latent; S50 is live |
-| **H** the app dies on data it ships | S26, S27, S30, **S14 (new)** | Was "availability only, and recoverable — lowest on two of the three axes". S14 arriving in this mode breaks that reasoning: see below |
+| **H** the app dies on data it ships | S26, S27, S30 | The mode's original discount — "availability only, and recoverable" — was falsified by probe 7 and is no longer applied. S14 left this group for rank 4 |
 
-*Cost of the ranking, stated plainly:* all executed probe evidence now sits in
-ranks 1–2. Ranks 3–5 are static findings.
+*Cost of the ranking, stated plainly:* executed probe evidence sits in ranks 1, 2
+and 4. Ranks 3 and 5 are static findings, and both are multipliers rather than
+observed failures.
 
-### ⚠ Open ranking question — S14, on evidence obtained after the ranking
+### Ranking revision — S14 in at 4, `double` out
 
-The ranking above was fixed before the Task-4 trail was validated. That validation
-produced a fact that was not available when S14 was placed below the line, and it
-is recorded here rather than acted on, because the order is a human judgment.
+The five were ordered before the Task-4 trail was validated. That validation, and
+the controlled A/B launch it prompted (probe 7), produced a fact that did not exist
+when S14 was placed below the line, so the order was reopened once, on evidence.
 
-**What was known:** a comma in a name shifts every following field, so the customer
-is detached from their record. Scored as data-integrity damage to *one* account —
-serious, but bounded, and mode **H** was discounted as "availability only, and
-recoverable".
+**What was known when S14 was excluded:** a comma in a name shifts every following
+field, so the customer is detached from their record. Scored as data-integrity
+damage to *one* account — serious, but bounded — and mode **H** was discounted as
+"availability only, and recoverable".
 
-**What is now known:** the shifted row is read at launch, and it kills the process
-before any window exists. `AdminDL.read_data:73` takes field 7 as the account number
-and calls `double.Parse` on it; with a comma in the name that field holds a city. The
-call sits in the `LogIn` **constructor** (`Form1.cs:18-26`), which has no `try`, and
-the constructor runs in `Program.Main` *before* `Application.Run`, so WinForms' own
-thread-exception handler is not yet installed. The exception is unhandled.
-
-**Verified by controlled execution**, not inferred. The trail run had the application
-write this row itself:
+**What is now known, by execution rather than inference:** the shifted row is read
+at launch and kills the process before any window exists. Two launches of the same
+executable from the same directory, differing only in `customers.txt` — corrupt row
+appended: **no visible window at all**, plus a `WerFault` crash-reporter process;
+control row: `Form1` present, no `WerFault`. The corrupt row was written by the
+application itself during the trail run:
 
 ```
 asd, das\,reg,qq,qq,Saving ,Attock,12123,222222,2000,2000,2000
 ```
 
-Two launches of the *same* executable from the *same* directory, differing only in
-`customers.txt`:
+**Against the file's own rubric:** *likelihood* — no attacker and no unusual path;
+`Ali, Jr` typed into the normal Add User form does it. *Magnitude* — total loss of
+availability for every user, not damage to one account. *Irreversibility* — the part
+previously underweighted: "recoverable" assumed someone can repair the file, but
+there is no backup, no export and no admin tooling (**S48**), and the application
+that would surface the problem cannot start.
 
-| Case | `customers.txt` | Result |
-|---|---|---|
-| **A** | corrupt row appended | **No visible window at all**, and a `WerFault` crash-reporter process present |
-| **B** | control, unmodified | `Form1` window present, no `WerFault` |
+**What kept it at 4 rather than higher.** Ranks 1–3 are *silent*: the bank cannot
+tell it has been harmed. S14-as-startup-denial is loud, instantly obvious, and
+conditional on one specific input. A defect you notice immediately is less dangerous
+than one you never notice — which is why it enters the five but does not lead them.
 
-**One customer name containing a comma renders the application permanently
-unstartable for every user** — and the name only has to be typed once, into the
-normal Add User form.
+**What it displaced, and why that is the right entry to lose.** `double` for money
+and identity is certain, but it is a precondition and a multiplier, not an observed
+failure: its practical consequence is that a repaired rank 2 can never be *proven*
+exact. Between a finding whose harm is provable-in-principle and one with executed
+evidence of the entire service becoming unavailable to everyone, business risk
+favours the second. `double` remains in the catalogue as S19a/S19b, and its fix —
+`decimal` for monetary fields, `string` or `int` for account numbers — is unchanged
+and remains a precondition for closing rank 2.
 
-**Why this may outrank its current position, against the file's own rubric:**
-
-- *Likelihood* — needs no attacker and no unusual path. A name like `Ali, Jr` typed
-  into the normal Add User form does it. Every operator can trigger it accidentally.
-- *Magnitude* — total loss of availability for all users, not damage to one account.
-- *Irreversibility* — **the highest of the three, and the part previously
-  underweighted.** "Recoverable" assumed someone can repair the file, but there is no
-  backup, no export and no admin tooling (**S48**), the datastore lives under
-  `bin/Debug`, and the app that would read it cannot start. Recovery means hand-editing
-  a text file, which presumes knowing this defect exists.
-
-**Counter-argument, for completeness:** ranks 1–2 are *silent* corruption, where the
-bank cannot tell it has been harmed. S14-as-startup-denial is loud and instantly
-obvious, and a defect you notice immediately is less dangerous than one you never
-notice. That argument is strong enough that this is genuinely a question and not a
-correction — which is exactly why it is left open.
-
-*The mode **H** discount ("recoverable") should be revisited either way, since it is
-the reasoning S14 now falsifies, independently of where S14 itself lands.*
+*Chronology, adjudication and attribution:* [`ANALYSIS_LOG.md`](ANALYSIS_LOG.md),
+"Ranking revision".
 
 ---
 
@@ -306,12 +307,12 @@ session flagged it as needing execution to confirm.
 | S11 · compounding | The two defects stack: a create with a comma in the name wrote a **12**-field row, i.e. S14's shift *on top of* S11's extra field. Field-index recovery is then guesswork | `DL/AdminDL.cs:96` | live | [E] trail run |
 | S12 | Transfer writes two files non-atomically | `TransactMoneyCus.cs:75-78` | latent | [E] window only |
 | S13 | Balances persisted only on the Log Out button; window-close loses them | `CusForm.cs:135-156,232-236` | live | [S] |
-| S14 | CSV fields never escaped — one comma shifts every following field, and the shifted row then **makes the app unstartable** (A/B controlled launch; see the ranking note above) | `DL/AdminDL.cs:96,105` +7 sites | live | [E] 5/5 + A/B |
+| S14 | CSV fields never escaped — one comma shifts every following field, and the shifted row then **makes the app unstartable** (A/B controlled launch) — **ranked 4**, see the ranking revision above | `DL/AdminDL.cs:96,105` +7 sites | live | [E] 5/5 + A/B |
 | S15 | Feedback is a `RichTextBox` written as one CSV line; newlines split records | `GiveFeedback.cs:26-27`, `DL/CustomerDL.cs:58` | live | [S] |
 | S16 | Dates are user-chosen localized display strings containing a comma | `DepositMoneyCus.cs:59` +6 sites | live | [S] |
 | S17 | Delete leaves history and frees the account number for reissue | `ViewCustomer.cs:105-108` | latent | [S] |
 | S18 | Edit skips the uniqueness checks Add enforces | `EditCustomer.cs:44-76` | latent | [S] |
-| S19a | Money is not represented exactly | `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19` | live | [S] |
+| S19a | Money is not represented exactly — **held rank 4 until the ranking revision above** | `BL/Admin.cs:17-19`, `BL/Customer.cs:12-19` | live | [S] |
 | S19b | Account numbers are `double`; identity decided by `==` | `AddUser.cs:70-77`, `TransactMoneyCus.cs:44`, `DL/CustomerDL.cs:139` | latent | [S] |
 
 ### security
